@@ -1,0 +1,1 @@
+"""Ascent Beacon API"""

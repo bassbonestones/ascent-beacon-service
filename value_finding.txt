@@ -1,0 +1,451 @@
+1) pick all the "values" you care about. 
+2) put them in buckets 
+Buckets:
+Pulls strongly
+Pulls somewhat
+Barely pulls / not now
+3) review buckets, show the user, let them decide you know what I didn't mean to put that there, then can can move things. 
+UI guidance:
+Show all three buckets on one screen
+Drag or tap-to-move
+No commentary from the system here
+A simple “Continue” when they’re ready
+4) if strong < 3, user picks 2 from somewhat. If strong > 6, user picks top 6 strong.
+
+
+---
+Values Discovery v1
+
+User selects all items that resonate
+User buckets them: Core / Important / Not right now
+User reviews and adjusts buckets freely
+If Core < 3 → gently invite promotion from Important
+If Core > 6 → user selects 3–6 to anchor
+Core items move forward to value statement creation
+
+---
+The 60 value prompts (with lenses)
+
+These are phrased as directional statements, not labels.
+
+🟦 How I show up for others (12)
+
+Being emotionally present with people I care about
+
+Listening fully without rushing to fix
+
+Showing patience when others are struggling
+
+Making time for connection even when busy
+
+Being reliable and following through
+
+Offering support without being asked
+
+Speaking honestly with care
+
+Creating a sense of safety for others
+
+Showing appreciation openly
+
+Being generous with attention
+
+Respecting others’ boundaries
+
+Showing up consistently, not just intensely
+
+🟩 How I treat myself (12)
+
+Giving myself rest without guilt
+
+Taking care of my physical health
+
+Allowing myself to feel emotions fully
+
+Speaking to myself with kindness
+
+Protecting my energy
+
+Making space for play and joy
+
+Letting go of perfectionism
+
+Honoring my limits
+
+Taking breaks before burnout
+
+Trusting myself
+
+Being patient with my own growth
+
+Choosing self-respect over approval
+
+🟨 What I protect (10)
+
+My time
+
+My mental and emotional health
+
+My family’s stability
+
+My personal boundaries
+
+My ability to focus deeply
+
+My integrity
+
+My home as a place of calm
+
+My financial security
+
+My autonomy
+
+My sense of meaning
+
+🟧 What I’m moving toward (10)
+
+Building a life that feels balanced
+
+Growing into a better version of myself
+
+Creating stability for the future
+
+Learning deeply and continuously
+
+Doing work that feels meaningful
+
+Becoming more present in daily life
+
+Living with intention rather than default
+
+Developing mastery in what I care about
+
+Creating long-term freedom
+
+Feeling at peace more often
+
+🟥 How I make decisions (8)
+
+Making decisions I can stand behind later
+
+Choosing long-term well-being over short-term relief
+
+Acting in alignment with my principles
+
+Pausing before reacting
+
+Being honest with myself about tradeoffs
+
+Choosing clarity over avoidance
+
+Deciding based on what truly matters
+
+Letting values guide choices, not pressure
+
+🟪 How I relate to the world (8)
+
+Acting with honesty even when it’s uncomfortable
+
+Treating people with fairness
+
+Being respectful of different perspectives
+
+Contributing positively where I can
+
+Being mindful of my impact on others
+
+Staying grounded in uncertainty
+
+Acting with compassion
+
+Being open to change
+---
+Manual add option (always visible)
+
+You were right to insist on this.
+
+UI copy suggestion:
+
+“Something else that matters to me”
+
+Rules:
+
+Always allowed
+
+No validation
+
+Treated exactly like predefined items
+
+User chooses lens (or system suggests one, optional)
+
+This preserves authorship and avoids the feeling of being boxed in.
+---
+Internal implementation notes (quick)
+
+Each item:
+
+id
+
+prompt_text
+
+primary_lens
+
+active = true
+
+These are not values yet — they’re discovery prompts.
+
+Only become real Values once:
+
+promoted to Core
+
+turned into a value statement
+---
+The ideal design for the 60
+Structure: 6 Lenses × 10 items each
+
+Each screen shows:
+
+Header:
+
+How I show up for others
+
+Subtext:
+
+Tap anything that resonates. No limit.
+
+Grid:
+
+10 items
+2-column layout
+Short phrases
+
+Selected items visually highlight.
+
+Bottom bar:
+
+Selected: 14
+Continue
+
+Then next lens.
+
+Why this works better psychologically
+
+10 items is cognitively manageable
+
+Users can compare across similar prompts
+
+It feels reflective, not evaluative
+
+It reduces “what if I missed something?”
+
+Optional refinement (even better)
+
+Within each lens:
+
+Show 6 initially
+“Show more” reveals remaining 4
+
+This:
+
+prevents overwhelm
+
+keeps screens visually calm
+
+maintains control
+----
+Bucketing is a meaningful transition moment. It should feel like:
+
+“Let’s organize what you already noticed.”
+
+Not:
+
+“Now categorize yourself.”
+
+Here’s how I would design it.
+
+🧭 The Bucketing Screen (Core / Important / Not right now)
+1️⃣ Framing Copy (very important)
+
+Top of screen:
+
+These all matter in some way.
+Let’s organize them by how they feel right now.
+
+Subtext:
+
+You can move things freely. Nothing is permanent.
+
+This prevents moral weight.
+
+2️⃣ Layout Options (choose one)
+
+There are two good patterns.
+
+✅ Option A (Recommended): Vertical stack buckets
+
+Three clearly separated sections:
+
+🟢 Core (right now)
+
+Feels central to how I want to live.
+
+(empty state text until items moved)
+
+🟡 Important
+
+Matters, but not central right now.
+
+⚪ Not right now
+
+Resonates, but not a focus currently.
+
+Where do items start?
+
+All selected items initially appear in Important (middle bucket).
+
+Why?
+
+It avoids accidental over-selection of Core.
+
+It feels neutral.
+
+It requires intentional promotion/demotion.
+
+3️⃣ Interaction Style
+Drag-and-drop?
+
+No.
+
+Drag-and-drop is flashy but:
+
+annoying on mobile
+
+error-prone
+
+harder to build cleanly
+
+Recommended: Tap-to-move
+
+Each card has:
+
+• Tap → opens small bottom sheet:
+
+Move to:
+
+Core
+
+Important
+
+Not right now
+
+Or simple inline buttons:
+
+“Make Core”
+
+“Move to Not right now”
+
+Keep it minimal.
+
+4️⃣ Visual Design Principles
+
+Buckets are vertically stacked
+
+Only 3–5 items visible at a time per bucket
+
+Smooth animated movement when changed
+
+No colors that imply “good” or “bad”
+
+Avoid:
+
+red for Not right now
+
+strong green for Core
+
+Subtle tones only.
+
+5️⃣ Behavior Rules
+Case: Core > 6
+
+Don’t block yet.
+
+Show gentle inline message:
+
+You’ve marked quite a few as Core.
+You’ll choose 3–6 to anchor next.
+
+This preserves autonomy.
+
+Case: Core < 3
+
+Don’t force promotion here.
+
+You handle that after they press Continue.
+
+6️⃣ Continue Button Behavior
+
+Bottom button:
+
+Continue
+
+On tap:
+
+If Core < 3:
+
+Show modal:
+
+You’ve marked fewer than 3 as Core.
+Would you like to promote a couple?
+
+Options:
+
+Review
+
+Continue anyway
+
+No force.
+
+If Core > 6:
+
+Show selection screen:
+
+Choose 3–6 to anchor right now.
+
+Now you narrow.
+
+7️⃣ Why this works
+
+It:
+
+feels spatial
+
+feels reflective
+
+allows comparison
+
+avoids gamification
+
+avoids algorithmic distortion
+
+preserves authorship
+
+And it’s very buildable.
+
+8️⃣ What NOT to do
+
+❌ Don’t use swipe-to-bucket
+❌ Don’t auto-distribute
+❌ Don’t reorder automatically
+❌ Don’t use animations that feel like sorting a deck
+
+Values are not cards in a game.
+
+9️⃣ The subtle UX trick
+
+Important detail:
+
+When items move to Core, animate them slightly slower.
+
+It subconsciously signals weight.
+
+Tiny things like that matter.

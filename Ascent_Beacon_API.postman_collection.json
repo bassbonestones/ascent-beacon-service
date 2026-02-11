@@ -1,0 +1,536 @@
+{
+  "info": {
+    "_postman_id": "ascent-beacon-api",
+    "name": "Ascent Beacon API",
+    "description": "Complete API collection for Ascent Beacon backend",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8000/health",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8000",
+              "path": ["health"]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Google Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id_token\": \"<google_id_token>\",\n  \"device_id\": \"device-123\",\n  \"device_name\": \"iPhone 14\"\n}"
+            },
+            "url": {
+              "raw": "http://localhost:8000/auth/google",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8000",
+              "path": ["auth", "google"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Apple Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id_token\": \"<apple_id_token>\",\n  \"device_id\": \"device-123\",\n  \"device_name\": \"iPhone 14\"\n}"
+            },
+            "url": {
+              "raw": "http://localhost:8000/auth/apple",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8000",
+              "path": ["auth", "apple"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Request Magic Link",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user@example.com\"\n}"
+            },
+            "url": {
+              "raw": "http://localhost:8000/auth/email/request",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8000",
+              "path": ["auth", "email", "request"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Verify Magic Link",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"<magic_link_token>\",\n  \"device_id\": \"device-123\",\n  \"device_name\": \"iPhone 14\"\n}"
+            },
+            "url": {
+              "raw": "http://localhost:8000/auth/email/verify",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8000",
+              "path": ["auth", "email", "verify"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Refresh Token",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refresh_token\": \"<refresh_token>\"\n}"
+            },
+            "url": {
+              "raw": "http://localhost:8000/auth/refresh",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8000",
+              "path": ["auth", "refresh"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refresh_token\": \"<refresh_token>\"\n}"
+            },
+            "url": {
+              "raw": "http://localhost:8000/auth/logout",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8000",
+              "path": ["auth", "logout"]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "User",
+      "item": [
+        {
+          "name": "Get Current User",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:8000/me",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8000",
+              "path": ["me"]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Values",
+      "item": [
+        {
+          "name": "Create Value",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"statement\": \"Integrity guides my decisions\",\n  \"weight_raw\": 10,\n  \"origin\": \"personal_reflection\"\n}"
+            },
+            "url": {
+              "raw": "http://localhost:8000/values",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8000",
+              "path": ["values"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List All Values",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:8000/values",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8000",
+              "path": ["values"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get Value History",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:8000/values/:value_id/history",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8000",
+              "path": ["values", ":value_id", "history"],
+              "variable": [
+                {
+                  "key": "value_id",
+                  "value": ""
+                }
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Priorities",
+      "item": [
+        {
+          "name": "Create Priority",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Exercise Routine\",\n  \"body\": \"Maintain consistent workout schedule\",\n  \"strength\": 8,\n  \"is_anchored\": false,\n  \"notes\": \"Important for health\"\n}"
+            },
+            "url": {
+              "raw": "http://localhost:8000/priorities",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8000",
+              "path": ["priorities"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List All Priorities",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:8000/priorities",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8000",
+              "path": ["priorities"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get Priority History",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:8000/priorities/:priority_id/history",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8000",
+              "path": ["priorities", ":priority_id", "history"],
+              "variable": [
+                {
+                  "key": "priority_id",
+                  "value": ""
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Create Priority Revision",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Exercise Routine Updated\",\n  \"body\": \"Maintain consistent workout schedule - increased frequency\",\n  \"strength\": 9,\n  \"is_anchored\": true,\n  \"notes\": \"Updated priorities\"\n}"
+            },
+            "url": {
+              "raw": "http://localhost:8000/priorities/:priority_id/revisions",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8000",
+              "path": ["priorities", ":priority_id", "revisions"],
+              "variable": [
+                {
+                  "key": "priority_id",
+                  "value": ""
+                }
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Links",
+      "item": [
+        {
+          "name": "Set Priority-Value Links",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"links\": [\n    {\n      \"value_revision_id\": \"value-rev-123\",\n      \"link_weight\": 0.6\n    },\n    {\n      \"value_revision_id\": \"value-rev-456\",\n      \"link_weight\": 0.4\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "http://localhost:8000/priority-revisions/:priority_revision_id/links",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8000",
+              "path": ["priority-revisions", ":priority_revision_id", "links"],
+              "variable": [
+                {
+                  "key": "priority_revision_id",
+                  "value": ""
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get Priority-Value Links",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:8000/priority-revisions/:priority_revision_id/links",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8000",
+              "path": ["priority-revisions", ":priority_revision_id", "links"],
+              "variable": [
+                {
+                  "key": "priority_revision_id",
+                  "value": ""
+                }
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Alignment",
+      "item": [
+        {
+          "name": "Check Alignment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": {
+              "raw": "http://localhost:8000/alignment/check",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8000",
+              "path": ["alignment", "check"]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Voice",
+      "item": [
+        {
+          "name": "Transcribe Audio (STT)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "audio",
+                  "type": "file",
+                  "src": "/path/to/audio.m4a"
+                }
+              ]
+            },
+            "url": {
+              "raw": "http://localhost:8000/voice/stt",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8000",
+              "path": ["voice", "stt"]
+            }
+          },
+          "response": []
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "access_token",
+      "value": "",
+      "type": "string"
+    }
+  ]
+}
