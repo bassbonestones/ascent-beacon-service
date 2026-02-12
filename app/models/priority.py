@@ -2,7 +2,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy import String, ForeignKey, DateTime, Numeric, Boolean, Index
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, UUIDMixin, TimestampMixin
@@ -33,6 +33,13 @@ class Priority(Base, UUIDMixin, TimestampMixin):
         cascade="all, delete-orphan",
         foreign_keys="PriorityRevision.priority_id",
     )
+    active_revision: Mapped["PriorityRevision"] = relationship(
+        "PriorityRevision",
+        primaryjoin="Priority.active_revision_id == PriorityRevision.id",
+        foreign_keys=[active_revision_id],
+        viewonly=True,
+        uselist=False,
+    )
     
     __table_args__ = (
         Index("idx_priorities_user_id", "user_id"),
@@ -57,13 +64,26 @@ class PriorityRevision(Base, UUIDMixin):
     )
     
     title: Mapped[str] = mapped_column(String, nullable=False)
-    body: Mapped[str | None] = mapped_column(String, nullable=True)
+    why_matters: Mapped[str] = mapped_column(String, nullable=False)
     
-    strength: Mapped[Decimal] = mapped_column(
-        Numeric,
-        default=1.0,
+    # Priority scoring (user-provided importance: 1-5)
+    score: Mapped[int] = mapped_column(
+        default=3,
         nullable=False,
     )
+    
+    # Scope defines temporal nature
+    scope: Mapped[str] = mapped_column(
+        String,
+        default="ongoing",
+        nullable=False,
+    )  # 'ongoing', 'in_progress', 'habitual', 'seasonal'
+    
+    # Optional cadence/frequency
+    cadence: Mapped[str | None] = mapped_column(String, nullable=True)  # e.g., "Weekly", "Daily"
+    
+    # Optional constraints as text
+    constraints: Mapped[str | None] = mapped_column(String, nullable=True)  # e.g., "Limited time availability", "Physical limitations"
     
     is_anchored: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)

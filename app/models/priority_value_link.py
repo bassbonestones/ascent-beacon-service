@@ -48,6 +48,11 @@ class PriorityValueLink(Base, UUIDMixin):
         back_populates="priority_links",
     )
     
+    @property
+    def value_id(self) -> str | None:
+        """Get the value_id from the related ValueRevision."""
+        return self.value_revision.value_id if self.value_revision else None
+    
     __table_args__ = (
         UniqueConstraint(
             "priority_revision_id",

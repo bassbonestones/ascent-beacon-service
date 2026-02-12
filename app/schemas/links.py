@@ -15,6 +15,7 @@ class PriorityValueLinkResponse(BaseModel):
     id: str
     priority_revision_id: str
     value_revision_id: str
+    value_id: str | None = None
     link_weight: Decimal
     created_at: str
     

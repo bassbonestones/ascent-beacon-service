@@ -3,6 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
+from sqlalchemy.orm import selectinload
 
 from app.core.db import get_db
 from app.core.auth import CurrentUser
@@ -58,12 +59,16 @@ async def set_priority_value_links(
     
     await db.commit()
     
-    # Reload links
-    for link in new_links:
-        await db.refresh(link)
+    # Reload links with eager loading
+    result = await db.execute(
+        select(PriorityValueLink)
+        .where(PriorityValueLink.priority_revision_id == priority_revision_id)
+        .options(selectinload(PriorityValueLink.value_revision))
+    )
+    links = result.scalars().all()
     
     return LinksResponse(
-        links=[PriorityValueLinkResponse.model_validate(link) for link in new_links]
+        links=[PriorityValueLinkResponse.model_validate(link) for link in links]
     )
 
 
@@ -91,11 +96,11 @@ async def get_priority_value_links(
             detail="Priority revision not found",
         )
     
-    # Get links
+    # Get links with eager loading of value_revision
     result = await db.execute(
-        select(PriorityValueLink).where(
-            PriorityValueLink.priority_revision_id == priority_revision_id
-        )
+        select(PriorityValueLink)
+        .where(PriorityValueLink.priority_revision_id == priority_revision_id)
+        .options(selectinload(PriorityValueLink.value_revision))
     )
     links = result.scalars().all()
     
