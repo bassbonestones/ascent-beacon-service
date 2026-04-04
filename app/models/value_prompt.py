@@ -1,6 +1,9 @@
-from sqlalchemy import Column, String, Boolean, Integer
+from uuid import uuid4
+
+from sqlalchemy import Boolean, Integer, String
 from sqlalchemy.dialects.postgresql import UUID
-import uuid
+from sqlalchemy.orm import Mapped, mapped_column
+
 from app.models.base import Base
 
 
@@ -9,11 +12,15 @@ class ValuePrompt(Base):
     
     __tablename__ = "value_prompts"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    prompt_text = Column(String, nullable=False)
-    primary_lens = Column(String, nullable=False)  # e.g., "How I show up for others"
-    display_order = Column(Integer, nullable=False, default=0)
-    active = Column(Boolean, default=True, nullable=False)
+    id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        primary_key=True,
+        default=lambda: str(uuid4()),
+    )
+    prompt_text: Mapped[str] = mapped_column(String, nullable=False)
+    primary_lens: Mapped[str] = mapped_column(String, nullable=False)  # e.g., "How I show up for others"
+    display_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     def __repr__(self) -> str:
         return f"<ValuePrompt {self.prompt_text[:50]}>"

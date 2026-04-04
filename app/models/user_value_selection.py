@@ -1,7 +1,9 @@
-from sqlalchemy import Column, String, Integer, ForeignKey, UniqueConstraint
+from uuid import uuid4
+
+from sqlalchemy import ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import relationship
-import uuid
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
 from app.models.base import Base, TimestampMixin
 
 
@@ -10,18 +12,30 @@ class UserValueSelection(Base, TimestampMixin):
     
     __tablename__ = "user_value_selections"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    prompt_id = Column(UUID(as_uuid=True), ForeignKey("value_prompts.id", ondelete="CASCADE"), nullable=False)
+    id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        primary_key=True,
+        default=lambda: str(uuid4()),
+    )
+    user_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    prompt_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("value_prompts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
     
     # Bucket: 'core', 'important', 'not_now', or 'custom' (for user-added items)
-    bucket = Column(String, nullable=False, default="important")
+    bucket: Mapped[str] = mapped_column(String, nullable=False, default="important")
     
     # Order within bucket for display/priority
-    display_order = Column(Integer, nullable=False, default=0)
+    display_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     
     # For custom prompts added by user
-    custom_text = Column(String, nullable=True)
+    custom_text: Mapped[str | None] = mapped_column(String, nullable=True)
     
     # Relationships
     user = relationship("User", backref="value_selections")
