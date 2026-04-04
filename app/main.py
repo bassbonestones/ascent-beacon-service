@@ -20,6 +20,9 @@ from app.api import (
     recommendations,
     discovery,
     goals,
+    tasks,
+    tasks_status,
+    tasks_views,
 )
 
 
@@ -72,6 +75,10 @@ app.include_router(assistant.router)
 app.include_router(recommendations.router)
 app.include_router(discovery.router)
 app.include_router(goals.router)
+app.include_router(tasks.router)
+app.include_router(tasks_status.router)
+app.include_router(tasks_views.router)
+app.include_router(tasks_views.completions_router)
 
 
 @app.get("/", include_in_schema=False)

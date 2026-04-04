@@ -11,6 +11,7 @@ from app.models.base import Base, TimestampMixin, UUIDMixin
 
 if TYPE_CHECKING:
     from app.models.goal_priority_link import GoalPriorityLink
+    from app.models.task import Task
     from app.models.user import User
 
 
@@ -75,6 +76,12 @@ class Goal(Base, UUIDMixin, TimestampMixin):
     
     priority_links: Mapped[list["GoalPriorityLink"]] = relationship(
         "GoalPriorityLink",
+        back_populates="goal",
+        cascade="all, delete-orphan",
+    )
+    
+    tasks: Mapped[list["Task"]] = relationship(
+        "Task",
         back_populates="goal",
         cascade="all, delete-orphan",
     )

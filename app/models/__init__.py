@@ -10,6 +10,8 @@ from app.models.priority import Priority, PriorityRevision
 from app.models.priority_value_link import PriorityValueLink
 from app.models.goal import Goal
 from app.models.goal_priority_link import GoalPriorityLink
+from app.models.task import Task
+from app.models.task_completion import TaskCompletion
 from app.models.embedding import Embedding
 from app.models.assistant_session import AssistantSession
 from app.models.assistant_turn import AssistantTurn
@@ -31,6 +33,8 @@ __all__ = [
     "PriorityValueLink",
     "Goal",
     "GoalPriorityLink",
+    "Task",
+    "TaskCompletion",
     "Embedding",
     "AssistantSession",
     "AssistantTurn",

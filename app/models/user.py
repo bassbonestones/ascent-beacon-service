@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from app.models.value import Value
     from app.models.priority import Priority
     from app.models.goal import Goal
+    from app.models.task import Task
     from app.models.assistant_session import AssistantSession
     from app.models.stt_request import STTRequest
 
@@ -59,6 +60,11 @@ class User(Base, UUIDMixin, TimestampMixin):
     )
     goals: Mapped[list["Goal"]] = relationship(
         "Goal",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+    tasks: Mapped[list["Task"]] = relationship(
+        "Task",
         back_populates="user",
         cascade="all, delete-orphan",
     )
