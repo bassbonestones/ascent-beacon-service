@@ -1,10 +1,17 @@
+from __future__ import annotations
+
+from datetime import datetime
+from typing import TYPE_CHECKING
+
 from sqlalchemy import String, ForeignKey, Index, UniqueConstraint, DateTime
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, UUIDMixin
 from app.core.time import utc_now
-from datetime import datetime
+
+if TYPE_CHECKING:
+    from app.models.user import User
 
 
 class UserIdentity(Base, UUIDMixin):

@@ -1,7 +1,19 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 from sqlalchemy import String, Boolean
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin, UUIDMixin
+
+if TYPE_CHECKING:
+    from app.models.user_identity import UserIdentity
+    from app.models.refresh_token import RefreshToken
+    from app.models.value import Value
+    from app.models.priority import Priority
+    from app.models.assistant_session import AssistantSession
+    from app.models.stt_request import STTRequest
 
 
 class User(Base, UUIDMixin, TimestampMixin):

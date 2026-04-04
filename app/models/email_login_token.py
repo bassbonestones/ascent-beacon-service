@@ -1,8 +1,9 @@
 from datetime import datetime
 
 from sqlalchemy import String, DateTime, Index
-from sqlalchemy.dialects.postgresql import INET
 from sqlalchemy.orm import Mapped, mapped_column
+
+from app.core.db_types import INET
 
 from app.models.base import Base, UUIDMixin
 from app.core.time import utc_now

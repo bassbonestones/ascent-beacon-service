@@ -2,6 +2,8 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 
+from typing import Any
+
 import jwt
 
 from app.core.config import settings
@@ -22,7 +24,7 @@ def create_access_token(user_id: str) -> str:
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
-def decode_access_token(token: str) -> dict:
+def decode_access_token(token: str) -> dict[str, Any]:
     """Decode and validate a JWT access token."""
     try:
         payload = jwt.decode(

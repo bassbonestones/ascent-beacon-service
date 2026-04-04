@@ -3,8 +3,8 @@ from datetime import datetime
 from sqlalchemy import String, Integer, DateTime, Index, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
-from pgvector.sqlalchemy import Vector
 
+from app.core.db_types import CompatibleVector
 from app.models.base import Base, UUIDMixin
 from app.core.time import utc_now
 
@@ -28,7 +28,7 @@ class Embedding(Base, UUIDMixin):
     dims: Mapped[int] = mapped_column(Integer, nullable=False)
     
     embedding: Mapped[list[float]] = mapped_column(
-        Vector(3072),
+        CompatibleVector(3072),
         nullable=False,
     )
     

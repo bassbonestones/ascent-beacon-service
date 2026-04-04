@@ -2,15 +2,11 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 
 from app.core.db import get_db
 from app.core.auth import CurrentUser
 from app.core.time import utc_now
 from app.models.priority import Priority, PriorityRevision
-from app.models.priority_value_link import PriorityValueLink
-from app.models.value import Value
 from app.schemas.priorities import (
     CreatePriorityRequest,
     CreatePriorityRevisionRequest,
@@ -19,16 +15,28 @@ from app.schemas.priorities import (
     PriorityRevisionResponse,
     ValidatePriorityRequest,
     ValidatePriorityResponse,
+    PriorityCheckResponse,
+    StashPriorityRequest,
 )
 from app.services.priority_validation import validate_priority
+from app.api.helpers.priority_helpers import (
+    get_priority_or_404,
+    reload_priority_with_eager_loading,
+    reload_priority_with_active_revision,
+    get_linked_values_for_revision,
+    create_value_links,
+    list_user_priorities,
+    get_priority_revisions,
+    validate_and_raise,
+)
 
 router = APIRouter(prefix="/priorities", tags=["priorities"])
 
 
-@router.post("/validate", response_model=ValidatePriorityResponse)
+@router.post("/validate", response_model=ValidatePriorityResponse, summary="Validate priority input")
 async def validate_priority_endpoint(
     request: ValidatePriorityRequest,
-):
+) -> ValidatePriorityResponse:
     """Validate a priority name and why statement before saving."""
     result = await validate_priority(request.name, request.why_statement)
     
@@ -45,24 +53,14 @@ async def validate_priority_endpoint(
     return ValidatePriorityResponse(**result)
 
 
-@router.post("", response_model=PriorityResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=PriorityResponse, status_code=status.HTTP_201_CREATED, summary="Create priority")
 async def create_priority(
     request: CreatePriorityRequest,
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
-):
+) -> PriorityResponse:
     """Create a new priority with initial revision."""
-    # Validate before creating
-    validation = await validate_priority(request.title, request.why_matters)
-    if not validation["overall_valid"]:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={
-                "error": "Priority validation failed",
-                "name_feedback": validation["name_feedback"],
-                "why_feedback": validation["why_feedback"],
-            }
-        )
+    await validate_and_raise(request.title, request.why_matters)
     
     # Create priority container
     priority = Priority(user_id=user.id)
@@ -88,108 +86,73 @@ async def create_priority(
     # Set active revision
     priority.active_revision_id = revision.id
     
-    # Create value links if provided
-    if request.value_ids:
-        for value_id in request.value_ids:
-            # Get the active revision for this value
-            value = await db.get(Value, value_id)
-            if value and value.active_revision_id:
-                link = PriorityValueLink(
-                    priority_revision_id=revision.id,
-                    value_revision_id=value.active_revision_id,
-                )
-                db.add(link)
-    
+    await create_value_links(db, revision.id, request.value_ids)
     await db.commit()
-    await db.refresh(priority)
-    
-    # Reload with active_revision and its value_links
-    result = await db.execute(
-        select(Priority)
-        .where(Priority.id == priority.id)
-        .options(
-            selectinload(Priority.active_revision).selectinload(PriorityRevision.value_links).selectinload(PriorityValueLink.value_revision)
-        )
-    )
-    priority = result.scalar_one()
-    
+    priority = await reload_priority_with_active_revision(db, priority.id)
     return PriorityResponse.model_validate(priority)
 
 
-@router.get("", response_model=PrioritiesListResponse)
+@router.get("", response_model=PrioritiesListResponse, summary="List active priorities")
 async def list_priorities(
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
-):
-    """Get all priorities for the current user."""
-    result = await db.execute(
-        select(Priority)
-        .where(Priority.user_id == user.id)
-        .options(
-            selectinload(Priority.active_revision).selectinload(PriorityRevision.value_links).selectinload(PriorityValueLink.value_revision)
-        )
-        .order_by(Priority.created_at)
-    )
-    priorities = result.scalars().all()
-    
+) -> PrioritiesListResponse:
+    """Get all active (non-stashed) priorities for the current user."""
+    priorities = await list_user_priorities(db, user.id, stashed=False)
     return PrioritiesListResponse(
         priorities=[PriorityResponse.model_validate(p) for p in priorities]
     )
 
 
-@router.get("/{priority_id}/history", response_model=list[PriorityRevisionResponse])
+@router.get("/stashed", response_model=PrioritiesListResponse, summary="List stashed priorities")
+async def list_stashed_priorities(
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> PrioritiesListResponse:
+    """Get all stashed priorities for the current user."""
+    priorities = await list_user_priorities(db, user.id, stashed=True)
+    return PrioritiesListResponse(
+        priorities=[PriorityResponse.model_validate(p) for p in priorities]
+    )
+
+
+@router.get("/{priority_id}/history", response_model=list[PriorityRevisionResponse], summary="Get priority history")
 async def get_priority_history(
     priority_id: str,
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
-):
+) -> list[PriorityRevisionResponse]:
     """Get revision history for a priority."""
-    # Verify ownership
-    priority = await db.get(Priority, priority_id)
-    if not priority or priority.user_id != user.id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Priority not found",
-        )
-    
-    # Get revisions
-    result = await db.execute(
-        select(PriorityRevision)
-        .where(PriorityRevision.priority_id == priority_id)
-        .order_by(PriorityRevision.created_at.desc())
-    )
-    revisions = result.scalars().all()
-    
+    await get_priority_or_404(db, user.id, priority_id)
+    revisions = await get_priority_revisions(db, priority_id)
     return [PriorityRevisionResponse.model_validate(r) for r in revisions]
 
 
-@router.post("/{priority_id}/revisions", response_model=PriorityResponse)
+@router.post("/{priority_id}/revisions", response_model=PriorityResponse, summary="Create priority revision")
 async def create_priority_revision(
     priority_id: str,
     request: CreatePriorityRevisionRequest,
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
-):
+) -> PriorityResponse:
     """Create a new revision for a priority."""
-    # Verify ownership
-    priority = await db.get(Priority, priority_id)
-    if not priority or priority.user_id != user.id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Priority not found",
-        )
+    priority = await get_priority_or_404(db, user.id, priority_id)
+    await validate_and_raise(request.title, request.why_matters)
     
-    # Validate before creating
-    validation = await validate_priority(request.title, request.why_matters)
-    if not validation["overall_valid"]:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={
-                "error": "Priority validation failed",
-                "name_feedback": validation["name_feedback"],
-                "why_feedback": validation["why_feedback"],
-            }
-        )
+    # Check if we would create an orphaned anchored priority
+    # (trying to unlink all values from an anchored priority)
+    if not request.value_ids or len(request.value_ids) == 0:
+        if priority.active_revision_id:
+            current_revision = await db.get(PriorityRevision, priority.active_revision_id)
+            if current_revision and current_revision.is_anchored:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "error": "Cannot orphan anchored priority",
+                        "message": "A priority needs at least one linked value when anchored. You can either link at least one value, or unanchor this priority first.",
+                        "code": "ORPHANED_ANCHORED_PRIORITY"
+                    }
+                )
     
     # Deactivate current active revision
     if priority.active_revision_id:
@@ -217,47 +180,20 @@ async def create_priority_revision(
     priority.active_revision_id = revision.id
     priority.updated_at = utc_now()
     
-    # Create value links if provided
-    if request.value_ids:
-        for value_id in request.value_ids:
-            # Get the active revision for this value
-            value = await db.get(Value, value_id)
-            if value and value.active_revision_id:
-                link = PriorityValueLink(
-                    priority_revision_id=revision.id,
-                    value_revision_id=value.active_revision_id,
-                )
-                db.add(link)
-    
+    await create_value_links(db, revision.id, request.value_ids)
     await db.commit()
-    await db.refresh(priority)
-    
-    # Reload with active_revision and its value_links
-    result = await db.execute(
-        select(Priority)
-        .where(Priority.id == priority.id)
-        .options(
-            selectinload(Priority.active_revision).selectinload(PriorityRevision.value_links).selectinload(PriorityValueLink.value_revision)
-        )
-    )
-    priority = result.scalar_one()
-    
+    priority = await reload_priority_with_active_revision(db, priority.id)
     return PriorityResponse.model_validate(priority)
 
 
-@router.post("/{priority_id}/anchor", response_model=PriorityResponse)
+@router.post("/{priority_id}/anchor", response_model=PriorityResponse, summary="Anchor priority")
 async def anchor_priority(
     priority_id: str,
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
-):
+) -> PriorityResponse:
     """Anchor a priority (mark as protected)."""
-    priority = await db.get(Priority, priority_id)
-    if not priority or priority.user_id != user.id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Priority not found",
-        )
+    priority = await get_priority_or_404(db, user.id, priority_id)
     
     if priority.active_revision_id:
         active_revision = await db.get(PriorityRevision, priority.active_revision_id)
@@ -265,32 +201,18 @@ async def anchor_priority(
             active_revision.is_anchored = True
     
     await db.commit()
-    await db.refresh(priority)
-    
-    # Reload with revisions
-    result = await db.execute(
-        select(Priority)
-        .where(Priority.id == priority.id)
-        .options(selectinload(Priority.revisions))
-    )
-    priority = result.scalar_one()
-    
+    priority = await reload_priority_with_eager_loading(db, priority_id)
     return PriorityResponse.model_validate(priority)
 
 
-@router.post("/{priority_id}/unanchor", response_model=PriorityResponse)
+@router.post("/{priority_id}/unanchor", response_model=PriorityResponse, summary="Unanchor priority")
 async def unanchor_priority(
     priority_id: str,
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
-):
+) -> PriorityResponse:
     """Unanchor a priority (remove protection)."""
-    priority = await db.get(Priority, priority_id)
-    if not priority or priority.user_id != user.id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Priority not found",
-        )
+    priority = await get_priority_or_404(db, user.id, priority_id)
     
     if priority.active_revision_id:
         active_revision = await db.get(PriorityRevision, priority.active_revision_id)
@@ -298,32 +220,72 @@ async def unanchor_priority(
             active_revision.is_anchored = False
     
     await db.commit()
-    await db.refresh(priority)
-    
-    # Reload with revisions
-    result = await db.execute(
-        select(Priority)
-        .where(Priority.id == priority.id)
-        .options(selectinload(Priority.revisions))
-    )
-    priority = result.scalar_one()
-    
+    priority = await reload_priority_with_eager_loading(db, priority_id)
     return PriorityResponse.model_validate(priority)
 
 
-@router.delete("/{priority_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{priority_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Delete priority")
 async def delete_priority(
     priority_id: str,
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
-):
+) -> None:
     """Delete a priority."""
-    priority = await db.get(Priority, priority_id)
-    if not priority or priority.user_id != user.id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Priority not found",
-        )
-    
+    priority = await get_priority_or_404(db, user.id, priority_id)
     await db.delete(priority)
     await db.commit()
+
+
+@router.get("/{priority_id}/check-status", response_model=PriorityCheckResponse, summary="Check priority status")
+async def check_priority_status(
+    priority_id: str,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> PriorityCheckResponse:
+    """Check if priority has linked values and anchoring status."""
+    priority = await get_priority_or_404(db, user.id, priority_id)
+    
+    if not priority.active_revision_id:
+        return PriorityCheckResponse(
+            priority_id=priority_id, has_linked_values=False,
+            linked_value_count=0, linked_values=[],
+            is_anchored=False, status="incomplete",
+        )
+    
+    active_rev = await db.get(PriorityRevision, priority.active_revision_id)
+    if not active_rev:
+        return PriorityCheckResponse(
+            priority_id=priority_id, has_linked_values=False,
+            linked_value_count=0, linked_values=[],
+            is_anchored=False, status="incomplete",
+        )
+    
+    linked_values = await get_linked_values_for_revision(db, active_rev.id)
+    # Truncate long statements
+    for lv in linked_values:
+        if len(lv.value_statement) > 100:
+            lv.value_statement = lv.value_statement[:100] + "..."
+    
+    return PriorityCheckResponse(
+        priority_id=priority_id,
+        has_linked_values=len(linked_values) > 0,
+        linked_value_count=len(linked_values),
+        linked_values=linked_values,
+        is_anchored=active_rev.is_anchored,
+        status="complete" if linked_values else "incomplete",
+    )
+
+
+@router.post("/{priority_id}/stash", response_model=PriorityResponse, summary="Stash/unstash priority")
+async def stash_priority(
+    priority_id: str,
+    request: StashPriorityRequest,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> PriorityResponse:
+    """Stash or unstash a priority (archive/inactive)."""
+    priority = await get_priority_or_404(db, user.id, priority_id)
+    priority.is_stashed = request.is_stashed
+    await db.commit()
+    priority = await reload_priority_with_eager_loading(db, priority_id)
+    return PriorityResponse.model_validate(priority)

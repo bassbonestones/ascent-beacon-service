@@ -69,6 +69,23 @@ class PrioritiesListResponse(BaseModel):
     priorities: list[PriorityResponse]
 
 
+class LinkedValueInfo(BaseModel):
+    """Info about a value linked to a priority."""
+    value_id: str
+    value_statement: str
+    link_weight: Decimal = Decimal("1.0")
+
+
+class PriorityCheckResponse(BaseModel):
+    """Response from checking priority status."""
+    priority_id: str
+    has_linked_values: bool
+    linked_value_count: int
+    linked_values: list[LinkedValueInfo]
+    is_anchored: bool
+    status: str  # "complete" or "incomplete"
+
+
 class ValidatePriorityRequest(BaseModel):
     """Request to validate a priority name and why statement."""
     name: str = Field(min_length=1)
@@ -92,3 +109,8 @@ class ValidatePriorityResponse(BaseModel):
     why_passed_rules: dict[str, bool]
     rule_examples: dict[str, RuleExample] | None = None  # Examples for failed rules
     overall_valid: bool
+
+
+class StashPriorityRequest(BaseModel):
+    """Request to stash or unstash a priority."""
+    is_stashed: bool

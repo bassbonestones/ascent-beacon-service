@@ -15,5 +15,5 @@ class ValuePrompt(Base):
     display_order = Column(Integer, nullable=False, default=0)
     active = Column(Boolean, default=True, nullable=False)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"<ValuePrompt {self.prompt_text[:50]}>"

@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 from datetime import datetime
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 from sqlalchemy import String, ForeignKey, DateTime, Numeric, Boolean, Index
 from sqlalchemy.dialects.postgresql import UUID
@@ -7,6 +10,11 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, UUIDMixin, TimestampMixin
 from app.core.time import utc_now
+
+if TYPE_CHECKING:
+    from app.models.user import User
+    from app.models.priority_value_link import PriorityValueLink
+    from app.models.embedding import Embedding
 
 
 class Value(Base, UUIDMixin, TimestampMixin):
@@ -32,6 +40,12 @@ class Value(Base, UUIDMixin, TimestampMixin):
         back_populates="value",
         cascade="all, delete-orphan",
         foreign_keys="ValueRevision.value_id",
+    )
+    active_revision: Mapped["ValueRevision | None"] = relationship(
+        "ValueRevision",
+        primaryjoin="Value.active_revision_id == ValueRevision.id",
+        foreign_keys=[active_revision_id],
+        viewonly=True,
     )
     
     __table_args__ = (

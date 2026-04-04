@@ -1,9 +1,17 @@
-from typing import Optional
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Optional
+
 from sqlalchemy import String, ForeignKey, Boolean, Index
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, UUIDMixin, TimestampMixin
+
+if TYPE_CHECKING:
+    from app.models.user import User
+    from app.models.assistant_turn import AssistantTurn
+    from app.models.assistant_recommendation import AssistantRecommendation
 
 
 class AssistantSession(Base, UUIDMixin, TimestampMixin):

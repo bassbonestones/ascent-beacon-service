@@ -13,12 +13,12 @@ from app.core.config import settings
 router = APIRouter(prefix="/voice", tags=["voice"])
 
 
-@router.post("/stt", response_model=STTResponse)
+@router.post("/stt", response_model=STTResponse, summary="Transcribe audio to text")
 async def transcribe_audio(
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
     audio: UploadFile = File(...),
-    user: CurrentUser = None,
-    db: Annotated[AsyncSession, Depends(get_db)] = None,
-):
+) -> STTResponse:
     """Transcribe audio to text (ephemeral, no audio stored)."""
     try:
         # Read audio bytes

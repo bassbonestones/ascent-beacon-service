@@ -10,6 +10,10 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.append(str(ROOT))
 
+# Add alembic/ to path so db_helpers can be imported
+ALEMBIC_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(ALEMBIC_DIR))
+
 from app.core.config import settings  # noqa: E402
 from app.models import Base  # noqa: E402
 

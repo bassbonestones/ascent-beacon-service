@@ -10,7 +10,7 @@ import uuid
 
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
+from db_helpers import uuid_column
 
 # revision identifiers, used by Alembic.
 revision: str = "0008"
@@ -97,7 +97,7 @@ PROMPTS = [
 def upgrade() -> None:
     value_prompts_table = sa.table(
         "value_prompts",
-        sa.column("id", postgresql.UUID(as_uuid=True)),
+        sa.column("id", sa.String(36)),
         sa.column("prompt_text", sa.String()),
         sa.column("primary_lens", sa.String()),
         sa.column("display_order", sa.Integer()),
@@ -106,7 +106,7 @@ def upgrade() -> None:
 
     prompts_data = [
         {
-            "id": uuid.uuid4(),
+            "id": str(uuid.uuid4()),
             "prompt_text": text,
             "primary_lens": lens,
             "display_order": order,

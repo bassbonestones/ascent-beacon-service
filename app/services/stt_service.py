@@ -1,3 +1,5 @@
+from typing import Any
+
 import httpx
 
 from app.core.config import settings
@@ -7,7 +9,7 @@ class STTService:
     """Service for speech-to-text transcription."""
     
     @staticmethod
-    async def transcribe_audio(audio_bytes: bytes, format: str = "m4a") -> dict:
+    async def transcribe_audio(audio_bytes: bytes, format: str = "m4a") -> dict[str, Any]:
         """Transcribe audio using OpenAI Whisper API."""
         if not settings.stt_api_key:
             raise ValueError("STT API key not configured")

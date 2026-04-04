@@ -81,8 +81,8 @@ async def compute_value_similarity(
     if not existing_values:
         return None, proposed_embedding
 
-    best_match = None
-    existing_statements = []
+    best_match: dict[str, Any] | None = None
+    existing_statements: list[str] = []
 
     for value in existing_values:
         if exclude_value_id and value.id == exclude_value_id:
@@ -136,10 +136,11 @@ async def compute_value_similarity(
     if not best_match:
         return None, proposed_embedding
 
-    if best_match["similarity_score"] >= SIMILARITY_THRESHOLD:
+    similarity_score = float(best_match["similarity_score"])
+    if similarity_score >= SIMILARITY_THRESHOLD:
         return best_match, proposed_embedding
 
-    if best_match["similarity_score"] >= LLM_FALLBACK_THRESHOLD:
+    if similarity_score >= LLM_FALLBACK_THRESHOLD:
         try:
             llm_result = await llm_overlap_check(proposed_statement, existing_statements)
         except Exception:
@@ -156,7 +157,7 @@ async def compute_value_similarity(
                     matched = {
                         "similar_value_id": value.id,
                         "similar_value_revision_id": active_rev.id,
-                        "similarity_score": float(best_match["similarity_score"]),
+                        "similarity_score": similarity_score,
                         "similar_statement": active_rev.statement,
                     }
                     break

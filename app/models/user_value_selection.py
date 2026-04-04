@@ -31,5 +31,5 @@ class UserValueSelection(Base, TimestampMixin):
         UniqueConstraint("user_id", "prompt_id", name="uq_user_prompt"),
     )
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"<UserValueSelection user={self.user_id} bucket={self.bucket}>"

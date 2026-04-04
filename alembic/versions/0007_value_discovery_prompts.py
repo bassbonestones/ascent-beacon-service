@@ -9,7 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
+from db_helpers import uuid_column, is_postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = "0007"
@@ -20,28 +20,29 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     # Create value_prompts table
+    bool_default = "true" if is_postgresql() else "1"
     op.create_table(
         "value_prompts",
-        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column("id", uuid_column(), primary_key=True),
         sa.Column("prompt_text", sa.String(), nullable=False),
         sa.Column("primary_lens", sa.String(), nullable=False),
         sa.Column("display_order", sa.Integer(), nullable=False, server_default="0"),
-        sa.Column("active", sa.Boolean(), nullable=False, server_default="true"),
+        sa.Column("active", sa.Boolean(), nullable=False, server_default=bool_default),
     )
 
     # Create user_value_selections table
     op.create_table(
         "user_value_selections",
-        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column("id", uuid_column(), primary_key=True),
         sa.Column(
             "user_id",
-            postgresql.UUID(as_uuid=True),
+            uuid_column(),
             sa.ForeignKey("users.id", ondelete="CASCADE"),
             nullable=False,
         ),
         sa.Column(
             "prompt_id",
-            postgresql.UUID(as_uuid=True),
+            uuid_column(),
             sa.ForeignKey("value_prompts.id", ondelete="CASCADE"),
             nullable=False,
         ),
@@ -50,13 +51,7 @@ def upgrade() -> None:
         sa.Column("custom_text", sa.String(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-    )
-
-    # Create unique constraint
-    op.create_unique_constraint(
-        "uq_user_prompt",
-        "user_value_selections",
-        ["user_id", "prompt_id"],
+        sa.UniqueConstraint("user_id", "prompt_id", name="uq_user_prompt"),
     )
 
     # Create indexes for common queries

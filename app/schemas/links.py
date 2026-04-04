@@ -1,4 +1,5 @@
 from decimal import Decimal
+from datetime import datetime
 from pydantic import BaseModel
 
 
@@ -17,7 +18,7 @@ class PriorityValueLinkResponse(BaseModel):
     value_revision_id: str
     value_id: str | None = None
     link_weight: Decimal
-    created_at: str
+    created_at: datetime
     
     model_config = {"from_attributes": True}
 

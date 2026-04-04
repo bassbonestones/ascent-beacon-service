@@ -9,7 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
+from db_helpers import uuid_column, now_default, inet_column
 
 # revision identifiers, used by Alembic.
 revision: str = '0002'
@@ -22,13 +22,13 @@ def upgrade() -> None:
     # Email login tokens table
     op.create_table(
         'email_login_tokens',
-        sa.Column('id', postgresql.UUID(as_uuid=False), primary_key=True),
+        sa.Column('id', uuid_column(), primary_key=True),
         sa.Column('email', sa.String(), nullable=False),
         sa.Column('token_hash', sa.String(), nullable=False, unique=True),
-        sa.Column('created_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.text('now()')),
+        sa.Column('created_at', sa.DateTime(timezone=True), nullable=False, server_default=now_default()),
         sa.Column('expires_at', sa.DateTime(timezone=True), nullable=False),
         sa.Column('used_at', sa.DateTime(timezone=True), nullable=True),
-        sa.Column('request_ip', postgresql.INET(), nullable=True),
+        sa.Column('request_ip', inet_column(), nullable=True),
         sa.Column('user_agent', sa.String(), nullable=True),
     )
     op.create_index('idx_email_login_tokens_email', 'email_login_tokens', ['email'])
@@ -37,15 +37,15 @@ def upgrade() -> None:
     # Refresh tokens table
     op.create_table(
         'refresh_tokens',
-        sa.Column('id', postgresql.UUID(as_uuid=False), primary_key=True),
-        sa.Column('user_id', postgresql.UUID(as_uuid=False), nullable=False),
+        sa.Column('id', uuid_column(), primary_key=True),
+        sa.Column('user_id', uuid_column(), nullable=False),
         sa.Column('token_hash', sa.String(), nullable=False, unique=True),
-        sa.Column('created_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.text('now()')),
+        sa.Column('created_at', sa.DateTime(timezone=True), nullable=False, server_default=now_default()),
         sa.Column('expires_at', sa.DateTime(timezone=True), nullable=False),
         sa.Column('revoked_at', sa.DateTime(timezone=True), nullable=True),
         sa.Column('device_id', sa.String(), nullable=True),
         sa.Column('device_name', sa.String(), nullable=True),
-        sa.Column('last_ip', postgresql.INET(), nullable=True),
+        sa.Column('last_ip', inet_column(), nullable=True),
         sa.ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
     )
     op.create_index('idx_refresh_tokens_user_id', 'refresh_tokens', ['user_id'])

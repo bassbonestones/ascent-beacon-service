@@ -34,7 +34,7 @@ class ValueResponse(BaseModel):
     revisions: list[ValueRevisionResponse] = []
     insights: list[ValueInsight] = []
     
-    @computed_field
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def active_revision(self) -> ValueRevisionResponse | None:
         """Get the active revision from the revisions list."""
@@ -62,6 +62,29 @@ class CreateValueRevisionRequest(BaseModel):
 
 class AcknowledgeValueInsightRequest(BaseModel):
     revision_id: Optional[str] = None
+
+
+class AffectedPriorityInfo(BaseModel):
+    """Info about a priority affected by value edit."""
+    priority_id: str
+    title: str
+    is_anchored: bool
+    
+    model_config = {"from_attributes": True}
+
+
+class ValueEditImpactInfo(BaseModel):
+    """Impact info returned after editing a value."""
+    affected_priorities_count: int
+    affected_priorities: list[AffectedPriorityInfo]
+    similarity_changed: bool
+    new_similar_value_id: Optional[str] = None
+    weight_verification_recommended: bool
+
+
+class ValueEditResponse(ValueResponse):
+    """Extended response for value edits with impact info."""
+    impact_info: Optional[ValueEditImpactInfo] = None
 
 
 class ValuesListResponse(BaseModel):

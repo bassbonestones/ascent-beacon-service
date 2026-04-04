@@ -14,13 +14,13 @@ from app.schemas.links import SetLinksRequest, LinksResponse, PriorityValueLinkR
 router = APIRouter(prefix="/priority-revisions", tags=["links"])
 
 
-@router.put("/{priority_revision_id}/links", response_model=LinksResponse)
+@router.put("/{priority_revision_id}/links", response_model=LinksResponse, summary="Set priority value links")
 async def set_priority_value_links(
     priority_revision_id: str,
     request: SetLinksRequest,
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
-):
+) -> LinksResponse:
     """Set value links for a priority revision (replaces existing links)."""
     # Verify ownership
     result = await db.execute(
@@ -72,12 +72,12 @@ async def set_priority_value_links(
     )
 
 
-@router.get("/{priority_revision_id}/links", response_model=LinksResponse)
+@router.get("/{priority_revision_id}/links", response_model=LinksResponse, summary="Get priority value links")
 async def get_priority_value_links(
     priority_revision_id: str,
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
-):
+) -> LinksResponse:
     """Get value links for a priority revision."""
     # Verify ownership
     result = await db.execute(

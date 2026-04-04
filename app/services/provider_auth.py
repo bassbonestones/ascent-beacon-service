@@ -1,3 +1,5 @@
+from typing import Any
+
 import httpx
 import jwt
 from jwt import PyJWKClient
@@ -9,7 +11,7 @@ class ProviderAuthService:
     """Service for validating OAuth provider tokens."""
     
     @staticmethod
-    async def verify_google_token(id_token: str) -> dict:
+    async def verify_google_token(id_token: str) -> dict[str, Any]:
         """Verify Google ID token and return payload."""
         try:
             audiences = []
@@ -48,7 +50,7 @@ class ProviderAuthService:
             raise ValueError(f"Invalid Google token: {e}")
     
     @staticmethod
-    async def verify_apple_token(id_token: str) -> dict:
+    async def verify_apple_token(id_token: str) -> dict[str, Any]:
         """Verify Apple ID token and return payload."""
         try:
             # Apple's public keys endpoint

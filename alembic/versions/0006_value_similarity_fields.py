@@ -9,7 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
+from db_helpers import uuid_column, is_postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = "0006"
@@ -19,26 +19,39 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "value_revisions",
-        sa.Column(
-            "similar_value_revision_id",
-            postgresql.UUID(as_uuid=False),
-            sa.ForeignKey("value_revisions.id", ondelete="SET NULL"),
-            nullable=True,
-        ),
-    )
+    if is_postgresql():
+        op.add_column(
+            "value_revisions",
+            sa.Column(
+                "similar_value_revision_id",
+                uuid_column(),
+                sa.ForeignKey("value_revisions.id", ondelete="SET NULL"),
+                nullable=True,
+            ),
+        )
+    else:
+        # SQLite: Add column without FK constraint (FK not enforced by default anyway)
+        op.add_column(
+            "value_revisions",
+            sa.Column(
+                "similar_value_revision_id",
+                uuid_column(),
+                nullable=True,
+            ),
+        )
+    
     op.add_column(
         "value_revisions",
         sa.Column("similarity_score", sa.Numeric(), nullable=True),
     )
+    default_val = sa.text("false") if is_postgresql() else sa.text("0")
     op.add_column(
         "value_revisions",
         sa.Column(
             "similarity_acknowledged",
             sa.Boolean(),
             nullable=False,
-            server_default=sa.text("false"),
+            server_default=default_val,
         ),
     )
 

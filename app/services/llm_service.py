@@ -1,3 +1,5 @@
+from typing import Any
+
 from app.core.llm import llm_client
 from app.core.config import settings
 
@@ -33,9 +35,9 @@ class LLMService:
     
     @staticmethod
     async def get_recommendation(
-        messages: list[dict],
-        user_context: dict,
-    ) -> dict:
+        messages: list[dict[str, Any]],
+        user_context: dict[str, Any],
+    ) -> dict[str, Any]:
         """Get a structured recommendation from the LLM."""
         # Build context-specific system message
         context_mode = user_context.get("context_mode", "general")
@@ -110,8 +112,8 @@ Keep responses conversational (2-4 sentences)."""
     
     @staticmethod
     async def get_alignment_reflection(
-        declared_values: dict,
-        implied_values: dict,
+        declared_values: dict[str, Any],
+        implied_values: dict[str, Any],
         total_variation_distance: float,
     ) -> str:
         """Get a reflection on alignment from the LLM."""
@@ -144,4 +146,4 @@ Keep it under 3 sentences.
             max_tokens=150,
         )
         
-        return response["choices"][0]["message"]["content"]
+        return str(response["choices"][0]["message"]["content"])

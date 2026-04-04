@@ -18,23 +18,23 @@ from app.services.llm_service import LLMService
 router = APIRouter(prefix="/alignment", tags=["alignment"])
 
 
-@router.post("/check", response_model=AlignmentCheckResponse)
+@router.post("/check", response_model=AlignmentCheckResponse, summary="Check value alignment")
 async def check_alignment(
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
-):
+) -> AlignmentCheckResponse:
     """Check alignment between declared values and implied priorities."""
     
     # Get active values
-    result = await db.execute(
+    values_result = await db.execute(
         select(Value)
         .where(Value.user_id == user.id)
         .options(selectinload(Value.revisions))
     )
-    values = result.scalars().all()
+    values = values_result.scalars().all()
     
     # Build declared value distribution
-    declared = {}
+    declared: dict[str, float] = {}
     total_weight = Decimal("0")
     
     for value in values:
@@ -52,34 +52,34 @@ async def check_alignment(
         declared = {k: v / float(total_weight) for k, v in declared.items()}
     
     # Get active anchored priorities
-    result = await db.execute(
+    priorities_result = await db.execute(
         select(Priority)
         .where(Priority.user_id == user.id)
         .options(
             selectinload(Priority.revisions).selectinload(PriorityRevision.value_links)
         )
     )
-    priorities = result.scalars().all()
+    priorities = priorities_result.scalars().all()
     
     # Build implied value distribution
-    implied_weights = defaultdict(float)
+    implied_weights: dict[str, float] = defaultdict(float)
     
     for priority in priorities:
         if priority.active_revision_id:
-            active_rev = next(
+            priority_rev: PriorityRevision | None = next(
                 (r for r in priority.revisions if r.id == priority.active_revision_id),
                 None
             )
-            if active_rev and active_rev.is_anchored:
-                # Distribute priority strength across linked values
+            if priority_rev and priority_rev.is_anchored:
+                # Distribute priority score across linked values
                 total_link_weight = sum(
-                    float(link.link_weight) for link in active_rev.value_links
+                    float(link.link_weight) for link in priority_rev.value_links
                 )
                 
                 if total_link_weight > 0:
-                    for link in active_rev.value_links:
+                    for link in priority_rev.value_links:
                         contribution = (
-                            float(active_rev.strength)
+                            float(priority_rev.score)
                             * float(link.link_weight)
                             / total_link_weight
                         )
@@ -104,8 +104,8 @@ async def check_alignment(
     
     # Get LLM reflection
     reflection = await LLMService.get_alignment_reflection(
-        declared=declared,
-        implied=implied,
+        declared_values=declared,
+        implied_values=implied,
         total_variation_distance=tvd,
     )
     

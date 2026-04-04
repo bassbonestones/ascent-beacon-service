@@ -22,12 +22,12 @@ from app.services.value_similarity import compute_value_similarity, EMBEDDING_MO
 router = APIRouter(prefix="/recommendations", tags=["recommendations"])
 
 
-@router.get("/session/{session_id}", response_model=list[RecommendationResponse])
+@router.get("/session/{session_id}", response_model=list[RecommendationResponse], summary="Get session recommendations")
 async def get_session_recommendations(
     session_id: str,
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
-):
+) -> list[RecommendationResponse]:
     """Get all recommendations for a session."""
     # Verify session belongs to user
     session = await db.get(AssistantSession, session_id)
@@ -44,11 +44,11 @@ async def get_session_recommendations(
     return [RecommendationResponse.model_validate(r) for r in recommendations]
 
 
-@router.get("/pending", response_model=list[RecommendationResponse])
+@router.get("/pending", response_model=list[RecommendationResponse], summary="Get pending recommendations")
 async def get_pending_recommendations(
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
-):
+) -> list[RecommendationResponse]:
     """Get all pending recommendations for the user across all sessions."""
     result = await db.execute(
         select(AssistantRecommendation)
@@ -64,13 +64,13 @@ async def get_pending_recommendations(
     return [RecommendationResponse.model_validate(r) for r in recommendations]
 
 
-@router.post("/{recommendation_id}/accept", response_model=RecommendationResponse)
+@router.post("/{recommendation_id}/accept", response_model=RecommendationResponse, summary="Accept recommendation")
 async def accept_recommendation(
     recommendation_id: str,
     request: AcceptRecommendationRequest,
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
-):
+) -> RecommendationResponse:
     """Accept and execute a recommendation."""
     try:
         # Get recommendation and verify ownership
@@ -192,13 +192,13 @@ async def accept_recommendation(
         )
 
 
-@router.post("/{recommendation_id}/reject", response_model=RecommendationResponse)
+@router.post("/{recommendation_id}/reject", response_model=RecommendationResponse, summary="Reject recommendation")
 async def reject_recommendation(
     recommendation_id: str,
     request: RejectRecommendationRequest,
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
-):
+) -> RecommendationResponse:
     """Reject a recommendation."""
     # Get recommendation and verify ownership
     rec = await db.get(AssistantRecommendation, recommendation_id)

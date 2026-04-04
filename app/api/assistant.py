@@ -24,12 +24,12 @@ from app.core.config import settings
 router = APIRouter(prefix="/assistant", tags=["assistant"])
 
 
-@router.post("/sessions", response_model=SessionResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/sessions", response_model=SessionResponse, status_code=status.HTTP_201_CREATED, summary="Create assistant session")
 async def create_session(
     request: CreateSessionRequest,
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
-):
+) -> SessionResponse:
     """Create a new assistant conversation session."""
     session = AssistantSession(
         user_id=user.id,
@@ -49,12 +49,12 @@ async def create_session(
     )
 
 
-@router.get("/sessions/{session_id}", response_model=SessionResponse)
+@router.get("/sessions/{session_id}", response_model=SessionResponse, summary="Get session details")
 async def get_session(
     session_id: str,
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
-):
+) -> SessionResponse:
     """Get a specific session with its turns."""
     result = await db.execute(
         select(AssistantSession)
@@ -85,13 +85,13 @@ async def get_session(
     )
 
 
-@router.post("/sessions/{session_id}/message", response_model=MessageResponse)
+@router.post("/sessions/{session_id}/message", response_model=MessageResponse, summary="Send message to assistant")
 async def send_message(
     session_id: str,
     request: SendMessageRequest,
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
-):
+) -> MessageResponse:
     """Send a message in a session and get LLM response."""
     # Verify session exists and belongs to user
     result = await db.execute(

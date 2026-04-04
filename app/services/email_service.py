@@ -1,6 +1,7 @@
 import httpx
 
 from app.core.config import settings
+from app.core.logging import logger
 
 
 class EmailService:
@@ -14,7 +15,7 @@ class EmailService:
         # Only use Resend for jeremiah.stones@gmail.com (verified email)
         # For other emails, log to console (resend.dev domain restriction)
         if not settings.resend_api_key or email != "jeremiah.stones@gmail.com":
-            print(f"\n🔗 Magic link for {email}:\n{link}\n")
+            logger.info("Magic link generated", email=email, link=link)
             return
         
         async with httpx.AsyncClient() as client:
@@ -41,15 +42,18 @@ class EmailService:
                 if not response.is_success:
                     try:
                         error_detail = response.json()
-                    except:
+                    except (ValueError, httpx.DecodingError):
                         error_detail = response.text
-                    print(f"❌ Resend API error ({response.status_code}): {error_detail}")
-                    print(f"   Email: {email}")
-                    print(f"   From: {settings.magic_link_from or 'Ascent Beacon <auth@ascentbeacon.app>'}")
+                    logger.error(
+                        "Resend API error",
+                        status_code=response.status_code,
+                        error=error_detail,
+                        email=email,
+                    )
                 
                 response.raise_for_status()
             except httpx.HTTPStatusError as e:
-                print(f"❌ Resend HTTP error: {e}")
+                logger.error("Resend HTTP error", error=str(e), email=email)
                 raise
     
     @staticmethod
@@ -58,7 +62,7 @@ class EmailService:
         # Only use Resend for jeremiah.stones@gmail.com (verified email)
         # For other emails, log to console (resend.dev domain restriction)
         if not settings.resend_api_key or email != "jeremiah.stones@gmail.com":
-            print(f"\n📧 Verification code for {email}: {code}\n")
+            logger.info("Verification code generated", email=email, code=code)
             return
         
         async with httpx.AsyncClient() as client:
@@ -86,13 +90,16 @@ class EmailService:
                 if not response.is_success:
                     try:
                         error_detail = response.json()
-                    except:
+                    except (ValueError, httpx.DecodingError):
                         error_detail = response.text
-                    print(f"❌ Resend API error ({response.status_code}): {error_detail}")
-                    print(f"   Email: {email}")
-                    print(f"   From: {settings.magic_link_from or 'Ascent Beacon <auth@ascentbeacon.app>'}")
+                    logger.error(
+                        "Resend API error",
+                        status_code=response.status_code,
+                        error=error_detail,
+                        email=email,
+                    )
                 
                 response.raise_for_status()
             except httpx.HTTPStatusError as e:
-                print(f"❌ Resend HTTP error: {e}")
+                logger.error("Resend HTTP error", error=str(e), email=email)
                 raise

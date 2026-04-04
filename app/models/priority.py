@@ -1,12 +1,20 @@
+from __future__ import annotations
+
 from datetime import datetime
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 from sqlalchemy import String, ForeignKey, DateTime, Numeric, Boolean, Index
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, UUIDMixin, TimestampMixin
 from app.core.time import utc_now
+
+if TYPE_CHECKING:
+    from app.models.user import User
+    from app.models.priority_value_link import PriorityValueLink
+    from app.models.embedding import Embedding
 
 
 class Priority(Base, UUIDMixin, TimestampMixin):
@@ -25,6 +33,8 @@ class Priority(Base, UUIDMixin, TimestampMixin):
         nullable=True,
     )
     
+    # Stash (archive) flag
+    is_stashed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     # Relationships
     user: Mapped["User"] = relationship("User", back_populates="priorities")
     revisions: Mapped[list["PriorityRevision"]] = relationship(

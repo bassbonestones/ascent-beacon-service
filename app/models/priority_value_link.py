@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 from datetime import datetime
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 from sqlalchemy import ForeignKey, DateTime, Numeric, Index, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
@@ -7,6 +10,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, UUIDMixin
 from app.core.time import utc_now
+
+if TYPE_CHECKING:
+    from app.models.priority import PriorityRevision
+    from app.models.value import ValueRevision
 
 
 class PriorityValueLink(Base, UUIDMixin):

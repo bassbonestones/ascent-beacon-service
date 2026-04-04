@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 from pydantic import BaseModel, Field, ConfigDict
 
 
@@ -11,7 +11,7 @@ class RecommendationResponse(BaseModel):
     created_at: datetime
     status: str
     proposed_action: str
-    payload: dict
+    payload: dict[str, Any]
     rationale: Optional[str] = None
     llm_provider: str
     llm_model: str

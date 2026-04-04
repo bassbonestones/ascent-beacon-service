@@ -1,7 +1,7 @@
 from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.orm import selectinload
 
 from app.core.auth import CurrentUser
@@ -20,10 +20,10 @@ from app.schemas.discovery import (
 router = APIRouter(prefix="/discovery", tags=["discovery"])
 
 
-@router.get("/prompts", response_model=DiscoveryPromptsResponse)
+@router.get("/prompts", response_model=DiscoveryPromptsResponse, summary="Get discovery prompts")
 async def get_discovery_prompts(
     db: Annotated[AsyncSession, Depends(get_db)],
-):
+) -> DiscoveryPromptsResponse:
     """Get all active value discovery prompts."""
     result = await db.execute(
         select(ValuePrompt)
@@ -34,11 +34,11 @@ async def get_discovery_prompts(
     return DiscoveryPromptsResponse(prompts=[ValuePromptResponse.model_validate(p) for p in prompts])
 
 
-@router.get("/selections", response_model=UserSelectionsResponse)
+@router.get("/selections", response_model=UserSelectionsResponse, summary="Get user selections")
 async def get_user_selections(
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
-):
+) -> UserSelectionsResponse:
     """Get user's current value selections."""
     result = await db.execute(
         select(UserValueSelection)
@@ -52,12 +52,12 @@ async def get_user_selections(
     )
 
 
-@router.post("/selections", response_model=UserValueSelectionResponse)
+@router.post("/selections", response_model=UserValueSelectionResponse, summary="Create selection")
 async def create_selection(
     selection: UserValueSelectionCreate,
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
-):
+) -> UserValueSelectionResponse:
     """Add a new value selection."""
     # Check if selection already exists
     existing = await db.execute(
@@ -90,13 +90,13 @@ async def create_selection(
     return UserValueSelectionResponse.model_validate(loaded)
 
 
-@router.put("/selections/{selection_id}", response_model=UserValueSelectionResponse)
+@router.put("/selections/{selection_id}", response_model=UserValueSelectionResponse, summary="Update selection")
 async def update_selection(
     selection_id: str,
     update: UserValueSelectionUpdate,
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
-):
+) -> UserValueSelectionResponse:
     """Update a value selection (change bucket or order)."""
     result = await db.execute(
         select(UserValueSelection)
@@ -110,9 +110,9 @@ async def update_selection(
         raise HTTPException(status_code=404, detail="Selection not found")
     
     if update.bucket is not None:
-        selection.bucket = update.bucket
+        selection.bucket = update.bucket  # type: ignore[assignment]
     if update.display_order is not None:
-        selection.display_order = update.display_order
+        selection.display_order = update.display_order  # type: ignore[assignment]
     
     await db.commit()
     await db.refresh(selection)
@@ -127,12 +127,12 @@ async def update_selection(
     return UserValueSelectionResponse.model_validate(loaded)
 
 
-@router.delete("/selections/{selection_id}")
+@router.delete("/selections/{selection_id}", summary="Delete selection")
 async def delete_selection(
     selection_id: str,
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
-):
+) -> dict[str, str]:
     """Remove a value selection."""
     result = await db.execute(
         select(UserValueSelection).where(
@@ -149,19 +149,19 @@ async def delete_selection(
     return {"status": "deleted"}
 
 
-@router.post("/selections/bulk", response_model=UserSelectionsResponse)
+@router.post("/selections/bulk", response_model=UserSelectionsResponse, summary="Bulk update selections")
 async def bulk_update_selections(
     bulk: BulkSelectionsUpdate,
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
-):
+) -> UserSelectionsResponse:
     """Bulk update all selections (used for drag-and-drop reordering)."""
     # Delete all existing selections
     await db.execute(
         select(UserValueSelection).where(UserValueSelection.user_id == user.id)
     )
     await db.execute(
-        UserValueSelection.__table__.delete().where(
+        delete(UserValueSelection).where(
             UserValueSelection.user_id == user.id
         )
     )

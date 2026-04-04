@@ -1,12 +1,18 @@
+from __future__ import annotations
+
 from datetime import datetime
-from typing import Optional
+from typing import TYPE_CHECKING, Optional, Any
 
 from sqlalchemy import String, ForeignKey, DateTime, Index
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.core.db_types import CompatibleJSON as JSONB
 from app.models.base import Base, UUIDMixin
 from app.core.time import utc_now
+
+if TYPE_CHECKING:
+    from app.models.assistant_session import AssistantSession
 
 
 class AssistantRecommendation(Base, UUIDMixin):
@@ -38,7 +44,7 @@ class AssistantRecommendation(Base, UUIDMixin):
     )  # 'create_value', 'create_priority', 'set_links', etc.
     
     # Strict JSON payload from the model (validated by backend)
-    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     
     # Optional human-readable explanation
     rationale: Mapped[Optional[str]] = mapped_column(String, nullable=True)

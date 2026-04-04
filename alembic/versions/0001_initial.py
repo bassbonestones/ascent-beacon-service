@@ -9,7 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
+from db_helpers import is_postgresql, uuid_column, now_default
 
 # revision identifiers, used by Alembic.
 revision: str = '0001'
@@ -19,18 +19,17 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # Create pgcrypto extension for gen_random_uuid()
-    op.execute('CREATE EXTENSION IF NOT EXISTS "pgcrypto"')
-    
-    # Create vector extension for embeddings
-    op.execute('CREATE EXTENSION IF NOT EXISTS "vector"')
+    # PostgreSQL-specific extensions
+    if is_postgresql():
+        op.execute('CREATE EXTENSION IF NOT EXISTS "pgcrypto"')
+        op.execute('CREATE EXTENSION IF NOT EXISTS "vector"')
     
     # Users table
     op.create_table(
         'users',
-        sa.Column('id', postgresql.UUID(as_uuid=False), primary_key=True),
-        sa.Column('created_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.text('now()')),
-        sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.text('now()')),
+        sa.Column('id', uuid_column(), primary_key=True),
+        sa.Column('created_at', sa.DateTime(timezone=True), nullable=False, server_default=now_default()),
+        sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False, server_default=now_default()),
         sa.Column('display_name', sa.String(), nullable=True),
         sa.Column('primary_email', sa.String(), nullable=True),
     )
@@ -39,12 +38,12 @@ def upgrade() -> None:
     # User identities table
     op.create_table(
         'user_identities',
-        sa.Column('id', postgresql.UUID(as_uuid=False), primary_key=True),
-        sa.Column('user_id', postgresql.UUID(as_uuid=False), nullable=False),
+        sa.Column('id', uuid_column(), primary_key=True),
+        sa.Column('user_id', uuid_column(), nullable=False),
         sa.Column('provider', sa.String(), nullable=False),
         sa.Column('provider_subject', sa.String(), nullable=False),
         sa.Column('email', sa.String(), nullable=True),
-        sa.Column('created_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.text('now()')),
+        sa.Column('created_at', sa.DateTime(timezone=True), nullable=False, server_default=now_default()),
         sa.ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
         sa.UniqueConstraint('provider', 'provider_subject', name='uq_provider_subject'),
     )
@@ -54,11 +53,11 @@ def upgrade() -> None:
     # Values table
     op.create_table(
         'values',
-        sa.Column('id', postgresql.UUID(as_uuid=False), primary_key=True),
-        sa.Column('user_id', postgresql.UUID(as_uuid=False), nullable=False),
-        sa.Column('created_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.text('now()')),
-        sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.text('now()')),
-        sa.Column('active_revision_id', postgresql.UUID(as_uuid=False), nullable=True),
+        sa.Column('id', uuid_column(), primary_key=True),
+        sa.Column('user_id', uuid_column(), nullable=False),
+        sa.Column('created_at', sa.DateTime(timezone=True), nullable=False, server_default=now_default()),
+        sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False, server_default=now_default()),
+        sa.Column('active_revision_id', uuid_column(), nullable=True),
         sa.ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
     )
     op.create_index('idx_values_user_id', 'values', ['user_id'])
@@ -66,9 +65,9 @@ def upgrade() -> None:
     # Value revisions table
     op.create_table(
         'value_revisions',
-        sa.Column('id', postgresql.UUID(as_uuid=False), primary_key=True),
-        sa.Column('value_id', postgresql.UUID(as_uuid=False), nullable=False),
-        sa.Column('created_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.text('now()')),
+        sa.Column('id', uuid_column(), primary_key=True),
+        sa.Column('value_id', uuid_column(), nullable=False),
+        sa.Column('created_at', sa.DateTime(timezone=True), nullable=False, server_default=now_default()),
         sa.Column('statement', sa.String(), nullable=False),
         sa.Column('weight_raw', sa.Numeric(), nullable=False),
         sa.Column('weight_normalized', sa.Numeric(), nullable=True),
@@ -83,11 +82,11 @@ def upgrade() -> None:
     # Priorities table
     op.create_table(
         'priorities',
-        sa.Column('id', postgresql.UUID(as_uuid=False), primary_key=True),
-        sa.Column('user_id', postgresql.UUID(as_uuid=False), nullable=False),
-        sa.Column('created_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.text('now()')),
-        sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.text('now()')),
-        sa.Column('active_revision_id', postgresql.UUID(as_uuid=False), nullable=True),
+        sa.Column('id', uuid_column(), primary_key=True),
+        sa.Column('user_id', uuid_column(), nullable=False),
+        sa.Column('created_at', sa.DateTime(timezone=True), nullable=False, server_default=now_default()),
+        sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False, server_default=now_default()),
+        sa.Column('active_revision_id', uuid_column(), nullable=True),
         sa.ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
     )
     op.create_index('idx_priorities_user_id', 'priorities', ['user_id'])
@@ -95,9 +94,9 @@ def upgrade() -> None:
     # Priority revisions table
     op.create_table(
         'priority_revisions',
-        sa.Column('id', postgresql.UUID(as_uuid=False), primary_key=True),
-        sa.Column('priority_id', postgresql.UUID(as_uuid=False), nullable=False),
-        sa.Column('created_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.text('now()')),
+        sa.Column('id', uuid_column(), primary_key=True),
+        sa.Column('priority_id', uuid_column(), nullable=False),
+        sa.Column('created_at', sa.DateTime(timezone=True), nullable=False, server_default=now_default()),
         sa.Column('title', sa.String(), nullable=False),
         sa.Column('body', sa.String(), nullable=True),
         sa.Column('strength', sa.Numeric(), nullable=False, server_default='1.0'),
@@ -113,11 +112,11 @@ def upgrade() -> None:
     # Priority-Value links table
     op.create_table(
         'priority_value_links',
-        sa.Column('id', postgresql.UUID(as_uuid=False), primary_key=True),
-        sa.Column('priority_revision_id', postgresql.UUID(as_uuid=False), nullable=False),
-        sa.Column('value_revision_id', postgresql.UUID(as_uuid=False), nullable=False),
+        sa.Column('id', uuid_column(), primary_key=True),
+        sa.Column('priority_revision_id', uuid_column(), nullable=False),
+        sa.Column('value_revision_id', uuid_column(), nullable=False),
         sa.Column('link_weight', sa.Numeric(), nullable=False, server_default='1.0'),
-        sa.Column('created_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.text('now()')),
+        sa.Column('created_at', sa.DateTime(timezone=True), nullable=False, server_default=now_default()),
         sa.ForeignKeyConstraint(['priority_revision_id'], ['priority_revisions.id'], ondelete='CASCADE'),
         sa.ForeignKeyConstraint(['value_revision_id'], ['value_revisions.id'], ondelete='RESTRICT'),
         sa.UniqueConstraint('priority_revision_id', 'value_revision_id', name='uq_priority_value_link'),
@@ -134,5 +133,6 @@ def downgrade() -> None:
     op.drop_table('values')
     op.drop_table('user_identities')
     op.drop_table('users')
-    op.execute('DROP EXTENSION IF EXISTS "vector"')
-    op.execute('DROP EXTENSION IF EXISTS "pgcrypto"')
+    if is_postgresql():
+        op.execute('DROP EXTENSION IF EXISTS "vector"')
+        op.execute('DROP EXTENSION IF EXISTS "pgcrypto"')

@@ -1,8 +1,12 @@
+from contextlib import asynccontextmanager
+from typing import AsyncGenerator
+
 from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
+from app.core.logging import logger, configure_logging
 from app.api import (
     health,
     auth,
@@ -17,11 +21,32 @@ from app.api import (
     discovery,
 )
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    """Application lifespan manager for startup/shutdown."""
+    # Startup
+    configure_logging()
+    logger.info(
+        "Application starting",
+        app_name=settings.app_name,
+        env=settings.env,
+    )
+    
+    yield
+    
+    # Shutdown
+    from app.core.llm import llm_client
+    await llm_client.close()
+    logger.info("Application shutdown complete")
+
+
 # Create FastAPI app
 app = FastAPI(
     title=settings.app_name,
     version="1.0.0",
     description="Backend API for Ascent Beacon: Priority Lock",
+    lifespan=lifespan,
 )
 
 # CORS middleware
@@ -48,21 +73,6 @@ app.include_router(discovery.router)
 
 
 @app.get("/", include_in_schema=False)
-async def root_redirect():
+async def root_redirect() -> RedirectResponse:
+    """Redirect root to API docs."""
     return RedirectResponse(url="/docs")
-
-
-@app.on_event("startup")
-async def startup():
-    """Startup event handler."""
-    print(f"🚀 {settings.app_name} starting up...")
-    print(f"   Environment: {settings.env}")
-    print(f"   Database: {settings.database_url.split('@')[1] if '@' in settings.database_url else 'configured'}")
-
-
-@app.on_event("shutdown")
-async def shutdown():
-    """Shutdown event handler."""
-    from app.core.llm import llm_client
-    await llm_client.close()
-    print("👋 Shutting down...")

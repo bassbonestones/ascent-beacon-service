@@ -1,11 +1,18 @@
+from __future__ import annotations
+
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import String, ForeignKey, DateTime, Index
-from sqlalchemy.dialects.postgresql import UUID, INET
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.core.db_types import INET
 from app.models.base import Base, UUIDMixin
 from app.core.time import utc_now
+
+if TYPE_CHECKING:
+    from app.models.user import User
 
 
 class RefreshToken(Base, UUIDMixin):
