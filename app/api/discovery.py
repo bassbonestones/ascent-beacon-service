@@ -2,7 +2,6 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
-from sqlalchemy.orm import selectinload
 
 from app.core.auth import CurrentUser
 from app.core.db import get_db
@@ -40,16 +39,22 @@ async def get_user_selections(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> UserSelectionsResponse:
     """Get user's current value selections."""
+    # Use explicit join to avoid lazy loading issues
     result = await db.execute(
-        select(UserValueSelection)
+        select(UserValueSelection, ValuePrompt)
+        .join(ValuePrompt, UserValueSelection.prompt_id == ValuePrompt.id)
         .where(UserValueSelection.user_id == user.id)
-        .options(selectinload(UserValueSelection.prompt))
         .order_by(UserValueSelection.bucket, UserValueSelection.display_order)
     )
-    selections = result.scalars().all()
-    return UserSelectionsResponse(
-        selections=[UserValueSelectionResponse.model_validate(s) for s in selections]
-    )
+    rows = result.all()
+    
+    # Build response with prompts attached
+    response_selections = []
+    for selection, prompt in rows:
+        selection.prompt = prompt
+        response_selections.append(UserValueSelectionResponse.model_validate(selection))
+    
+    return UserSelectionsResponse(selections=response_selections)
 
 
 @router.post("/selections", response_model=UserValueSelectionResponse, summary="Create selection")
@@ -63,7 +68,7 @@ async def create_selection(
     existing = await db.execute(
         select(UserValueSelection).where(
             UserValueSelection.user_id == user.id,
-            UserValueSelection.prompt_id == selection.prompt_id,
+            UserValueSelection.prompt_id == str(selection.prompt_id),
         )
     )
     if existing.scalar_one_or_none():
@@ -71,7 +76,7 @@ async def create_selection(
     
     new_selection = UserValueSelection(
         user_id=user.id,
-        prompt_id=selection.prompt_id,
+        prompt_id=str(selection.prompt_id),
         bucket=selection.bucket,
         display_order=selection.display_order,
         custom_text=selection.custom_text,
@@ -80,13 +85,15 @@ async def create_selection(
     await db.commit()
     await db.refresh(new_selection)
     
-    # Load with prompt
+    # Load with prompt via join
     result = await db.execute(
-        select(UserValueSelection)
+        select(UserValueSelection, ValuePrompt)
+        .join(ValuePrompt, UserValueSelection.prompt_id == ValuePrompt.id)
         .where(UserValueSelection.id == new_selection.id)
-        .options(selectinload(UserValueSelection.prompt))
     )
-    loaded = result.scalar_one()
+    row = result.one()
+    loaded, prompt = row
+    loaded.prompt = prompt
     return UserValueSelectionResponse.model_validate(loaded)
 
 
@@ -117,13 +124,15 @@ async def update_selection(
     await db.commit()
     await db.refresh(selection)
     
-    # Load with prompt
+    # Load with prompt via join
     result = await db.execute(
-        select(UserValueSelection)
+        select(UserValueSelection, ValuePrompt)
+        .join(ValuePrompt, UserValueSelection.prompt_id == ValuePrompt.id)
         .where(UserValueSelection.id == selection.id)
-        .options(selectinload(UserValueSelection.prompt))
     )
-    loaded = result.scalar_one()
+    row = result.one()
+    loaded, prompt = row
+    loaded.prompt = prompt
     return UserValueSelectionResponse.model_validate(loaded)
 
 
@@ -170,7 +179,7 @@ async def bulk_update_selections(
     new_selections = [
         UserValueSelection(
             user_id=user.id,
-            prompt_id=sel.prompt_id,
+            prompt_id=str(sel.prompt_id),
             bucket=sel.bucket,
             display_order=sel.display_order,
             custom_text=sel.custom_text,
@@ -180,14 +189,20 @@ async def bulk_update_selections(
     db.add_all(new_selections)
     await db.commit()
     
-    # Return updated list
+    # Return updated list - need fresh session state
+    # Use a new select to get all selections with their prompts via join
     result = await db.execute(
-        select(UserValueSelection)
+        select(UserValueSelection, ValuePrompt)
+        .join(ValuePrompt, UserValueSelection.prompt_id == ValuePrompt.id)
         .where(UserValueSelection.user_id == user.id)
-        .options(selectinload(UserValueSelection.prompt))
         .order_by(UserValueSelection.bucket, UserValueSelection.display_order)
     )
-    selections = result.scalars().all()
-    return UserSelectionsResponse(
-        selections=[UserValueSelectionResponse.model_validate(s) for s in selections]
-    )
+    rows = result.all()
+    
+    # Build response manually since we have tuples
+    response_selections = []
+    for selection, prompt in rows:
+        selection.prompt = prompt  # Attach prompt to selection
+        response_selections.append(UserValueSelectionResponse.model_validate(selection))
+    
+    return UserSelectionsResponse(selections=response_selections)
