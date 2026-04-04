@@ -14,6 +14,7 @@ from app.core.time import utc_now
 if TYPE_CHECKING:
     from app.models.user import User
     from app.models.priority_value_link import PriorityValueLink
+    from app.models.goal_priority_link import GoalPriorityLink
     from app.models.embedding import Embedding
 
 
@@ -51,6 +52,12 @@ class Priority(Base, UUIDMixin, TimestampMixin):
         uselist=False,
     )
     
+    goal_links: Mapped[list["GoalPriorityLink"]] = relationship(
+        "GoalPriorityLink",
+        back_populates="priority",
+        cascade="all, delete-orphan",
+    )
+
     __table_args__ = (
         Index("idx_priorities_user_id", "user_id"),
     )

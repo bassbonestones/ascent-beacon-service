@@ -8,6 +8,8 @@ from app.models.value_prompt import ValuePrompt
 from app.models.user_value_selection import UserValueSelection
 from app.models.priority import Priority, PriorityRevision
 from app.models.priority_value_link import PriorityValueLink
+from app.models.goal import Goal
+from app.models.goal_priority_link import GoalPriorityLink
 from app.models.embedding import Embedding
 from app.models.assistant_session import AssistantSession
 from app.models.assistant_turn import AssistantTurn
@@ -27,6 +29,8 @@ __all__ = [
     "Priority",
     "PriorityRevision",
     "PriorityValueLink",
+    "Goal",
+    "GoalPriorityLink",
     "Embedding",
     "AssistantSession",
     "AssistantTurn",

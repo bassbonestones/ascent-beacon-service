@@ -19,6 +19,7 @@ from app.api import (
     assistant,
     recommendations,
     discovery,
+    goals,
 )
 
 
@@ -70,6 +71,7 @@ app.include_router(voice.router)
 app.include_router(assistant.router)
 app.include_router(recommendations.router)
 app.include_router(discovery.router)
+app.include_router(goals.router)
 
 
 @app.get("/", include_in_schema=False)

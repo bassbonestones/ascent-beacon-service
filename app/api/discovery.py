@@ -110,9 +110,9 @@ async def update_selection(
         raise HTTPException(status_code=404, detail="Selection not found")
     
     if update.bucket is not None:
-        selection.bucket = update.bucket  # type: ignore[assignment]
+        selection.bucket = update.bucket
     if update.display_order is not None:
-        selection.display_order = update.display_order  # type: ignore[assignment]
+        selection.display_order = update.display_order
     
     await db.commit()
     await db.refresh(selection)
