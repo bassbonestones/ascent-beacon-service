@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from app.models.user import User
     from app.models.priority_value_link import PriorityValueLink
     from app.models.embedding import Embedding
+    from app.models.value_prompt import ValuePrompt
 
 
 class Value(Base, UUIDMixin, TimestampMixin):
@@ -90,6 +91,13 @@ class ValueRevision(Base, UUIDMixin):
         nullable=False,
     )  # 'declared' or 'explored'
     
+    # Track which discovery prompt was used (if any)
+    source_prompt_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("value_prompts.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    
     # Relationships
     value: Mapped["Value"] = relationship(
         "Value",
@@ -106,8 +114,14 @@ class ValueRevision(Base, UUIDMixin):
         primaryjoin="and_(ValueRevision.id == foreign(Embedding.entity_id), Embedding.entity_type == 'value_revision')",
         viewonly=True,
     )
+    source_prompt: Mapped["ValuePrompt | None"] = relationship(
+        "ValuePrompt",
+        foreign_keys=[source_prompt_id],
+        viewonly=True,
+    )
     
     __table_args__ = (
         Index("idx_value_revisions_value_id", "value_id"),
         Index("idx_value_revisions_is_active", "is_active"),
+        Index("idx_value_revisions_source_prompt_id", "source_prompt_id"),
     )

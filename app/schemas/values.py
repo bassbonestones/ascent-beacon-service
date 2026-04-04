@@ -12,6 +12,7 @@ class ValueRevisionResponse(BaseModel):
     weight_normalized: Decimal | None
     is_active: bool
     origin: str
+    source_prompt_id: str | None = None
     created_at: datetime
     
     model_config = {"from_attributes": True}
@@ -52,12 +53,14 @@ class CreateValueRequest(BaseModel):
     statement: str
     weight_raw: Decimal
     origin: str = "declared"
+    source_prompt_id: str | None = None
 
 
 class CreateValueRevisionRequest(BaseModel):
     statement: str
     weight_raw: Decimal
     origin: str = "declared"
+    source_prompt_id: str | None = None
 
 
 class AcknowledgeValueInsightRequest(BaseModel):
@@ -80,6 +83,12 @@ class ValueEditImpactInfo(BaseModel):
     similarity_changed: bool
     new_similar_value_id: Optional[str] = None
     weight_verification_recommended: bool
+
+
+class ValueDeleteConflict(BaseModel):
+    """Error response when value cannot be deleted due to linked priorities."""
+    message: str
+    affected_priorities: list[AffectedPriorityInfo]
 
 
 class ValueEditResponse(ValueResponse):

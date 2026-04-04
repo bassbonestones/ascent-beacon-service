@@ -9,6 +9,7 @@ from app.core.db import get_db
 from app.core.auth import CurrentUser
 from app.core.time import utc_now
 from app.models.value import Value, ValueRevision
+from app.models.priority_value_link import PriorityValueLink
 from app.schemas.values import (
     CreateValueRequest,
     CreateValueRevisionRequest,
@@ -20,6 +21,7 @@ from app.schemas.values import (
     ValueMatchResponse,
     ValueEditResponse,
     AffectedPriorityInfo,
+    ValueDeleteConflict,
 )
 from app.services.value_service import normalize_value_weights
 from app.api.helpers.value_helpers import (
@@ -43,6 +45,13 @@ async def create_value(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> ValueResponse:
     """Create a new value with initial revision."""
+    print(f"\n\n{'='*60}")
+    print(f"POST /values called")
+    print(f"Request body: {request}")
+    print(f"source_prompt_id received: {request.source_prompt_id}")
+    print(f"source_prompt_id type: {type(request.source_prompt_id)}")
+    print(f"{'='*60}")
+    
     # Rebalance existing values to make room for the new one
     await rebalance_values_equal_weight(db, user.id, new_value_count=1)
     
@@ -62,10 +71,13 @@ async def create_value(
         statement=request.statement,
         weight_raw=equal_weight,
         origin=request.origin,
+        source_prompt_id=request.source_prompt_id,
         is_active=True,
     )
+    print(f"Created revision with source_prompt_id: {revision.source_prompt_id}")
     db.add(revision)
     await db.flush()
+    print(f"After flush, revision.source_prompt_id: {revision.source_prompt_id}")
 
     # Set active revision
     value.active_revision_id = revision.id
@@ -172,6 +184,7 @@ async def create_value_revision(
         statement=request.statement,
         weight_raw=request.weight_raw,
         origin=request.origin,
+        source_prompt_id=request.source_prompt_id,
         is_active=True,
     )
     db.add(revision)
@@ -262,9 +275,49 @@ async def delete_value(
     value_id: str,
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
+    cascade: bool = False,
 ) -> None:
-    """Delete a value."""
+    """Delete a value.
+    
+    Args:
+        cascade: If True, unlinks all priorities before deleting.
+                 If False and value has linked priorities, returns 409 Conflict.
+    """
     value = await get_value_or_404(db, user.id, value_id)
+    
+    # Check for linked priorities
+    affected_priorities = await get_affected_priorities_for_value(db, user.id, value_id)
+    
+    if affected_priorities and not cascade:
+        # Return 409 Conflict with details
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=ValueDeleteConflict(
+                message=f"Value is linked to {len(affected_priorities)} priority(ies). Use cascade=true to delete anyway.",
+                affected_priorities=affected_priorities,
+            ).model_dump(),
+        )
+    
+    if affected_priorities and cascade:
+        # Delete all links to this value's revisions
+        revisions_result = await db.execute(
+            select(ValueRevision.id).where(ValueRevision.value_id == value_id)
+        )
+        revision_ids = [r for r in revisions_result.scalars().all()]
+        
+        if revision_ids:
+            await db.execute(
+                select(PriorityValueLink).where(
+                    PriorityValueLink.value_revision_id.in_(revision_ids)
+                )
+            )
+            # Actually delete the links
+            from sqlalchemy import delete as sql_delete
+            await db.execute(
+                sql_delete(PriorityValueLink).where(
+                    PriorityValueLink.value_revision_id.in_(revision_ids)
+                )
+            )
     
     await db.delete(value)
     await db.commit()
