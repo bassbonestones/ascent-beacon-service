@@ -103,7 +103,8 @@ def get_occurrences_in_range(
     end: datetime,
     scheduling_mode: Optional[str] = None,
     user_timezone: Optional[str] = None,
-    max_count: int = 100,
+    max_count: int = 400,
+    dtstart: Optional[datetime] = None,
 ) -> List[datetime]:
     """
     Get all occurrences of a recurring task within a date range.
@@ -115,12 +116,21 @@ def get_occurrences_in_range(
         scheduling_mode: 'floating' or 'fixed'
         user_timezone: User's current timezone (for floating tasks)
         max_count: Maximum number of occurrences to return
+        dtstart: The original start date of the recurrence (task's scheduled_at).
+                 If not provided, defaults to start (query range start).
     
     Returns:
         List of occurrence datetimes (in UTC)
     """
     try:
-        rule = parse_rrule(rule_string, dtstart=start)
+        # Use provided dtstart (task's original scheduled_at) or fall back to range start
+        rule_start = dtstart if dtstart is not None else start
+        
+        # Ensure rule_start is timezone-aware (match start's timezone)
+        if rule_start.tzinfo is None and start.tzinfo is not None:
+            rule_start = rule_start.replace(tzinfo=start.tzinfo)
+        
+        rule = parse_rrule(rule_string, dtstart=rule_start)
         occurrences = list(rule.between(start, end, inc=True))[:max_count]
         
         # For floating times, adjust to user's timezone

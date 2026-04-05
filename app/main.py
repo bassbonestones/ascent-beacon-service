@@ -23,6 +23,7 @@ from app.api import (
     tasks,
     tasks_status,
     tasks_views,
+    task_stats,
 )
 
 
@@ -79,6 +80,7 @@ app.include_router(tasks.router)
 app.include_router(tasks_status.router)
 app.include_router(tasks_views.router)
 app.include_router(tasks_views.completions_router)
+app.include_router(task_stats.router)
 
 
 @app.get("/", include_in_schema=False)

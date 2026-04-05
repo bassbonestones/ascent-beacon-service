@@ -224,3 +224,49 @@ class TaskRangeResponse(BaseModel):
     has_more: bool = False
     start_date: datetime
     end_date: datetime
+
+
+# ============================================================================
+# Stats Schemas (Phase 4c)
+# ============================================================================
+
+
+class TaskStatsPeriod(BaseModel):
+    """Time period for stats calculation."""
+
+    start: datetime
+    end: datetime
+
+
+class TaskStatsResponse(BaseModel):
+    """Response for task stats (habit tracking)."""
+
+    task_id: str
+    period: TaskStatsPeriod
+    total_expected: int  # Based on RRULE for recurring tasks
+    total_completed: int
+    total_skipped: int
+    total_missed: int  # Expected - completed - skipped
+    completion_rate: float  # completed / expected
+    current_streak: int  # Consecutive completions ending today
+    longest_streak: int  # Best streak ever in period
+    last_completed_at: datetime | None = None
+
+
+class DailyCompletionStatus(BaseModel):
+    """Status for a single day in completion history."""
+
+    date: str  # YYYY-MM-DD
+    status: str  # completed | skipped | missed | partial (for multi-occurrence)
+    expected: int = 1  # Expected completions for this day
+    completed: int = 0  # Actual completions
+    skipped: int = 0
+
+
+class CompletionHistoryResponse(BaseModel):
+    """Response for completion history (calendar data)."""
+
+    task_id: str
+    period: TaskStatsPeriod
+    days: list[DailyCompletionStatus]
+    summary: TaskStatsResponse
