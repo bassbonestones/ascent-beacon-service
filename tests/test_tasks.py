@@ -646,10 +646,15 @@ async def test_completed_filter_includes_recurring_tasks_completed_today(
 
 
 @pytest.mark.asyncio
-async def test_pending_filter_excludes_recurring_tasks_completed_today(
+async def test_pending_filter_includes_recurring_tasks_with_completion_info(
     client: AsyncClient,
 ):
-    """Test that status=pending excludes recurring tasks completed today."""
+    """Test that status=pending includes recurring tasks with completion tracking.
+    
+    Recurring tasks stay in pending filter even after completions, because:
+    1. Multi-occurrence tasks (X times/day) may still have pending occurrences
+    2. Frontend uses completions_today to show which virtual occurrences are done
+    """
     now = datetime.now(timezone.utc)
     scheduled_at = now.replace(hour=9, minute=0, second=0, microsecond=0)
 
@@ -672,8 +677,12 @@ async def test_pending_filter_excludes_recurring_tasks_completed_today(
         json={"scheduled_for": scheduled_at.isoformat()},
     )
 
-    # Filter by pending - should NOT include the recurring task
+    # Filter by pending - SHOULD include the recurring task with completion info
     list_response = await client.get("/tasks?status=pending")
     tasks = list_response.json()["tasks"]
     task = next((t for t in tasks if t["id"] == task_id), None)
-    assert task is None
+    
+    # Task is included but marked as completed for today
+    assert task is not None
+    assert task["completed_for_today"] is True
+    assert task["completions_today"] == 1

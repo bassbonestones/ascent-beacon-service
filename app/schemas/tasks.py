@@ -97,6 +97,10 @@ class TaskResponse(BaseModel):
     
     # Phase 4b: For recurring tasks, indicates if completed for today
     completed_for_today: bool = False
+    
+    # Phase 4b: For recurring tasks with multiple daily occurrences, 
+    # how many completions recorded for today
+    completions_today: int = 0
 
     # Linked goal info (populated via eager loading)
     goal: GoalInfo | None = None

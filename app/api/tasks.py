@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select, and_, or_
+from sqlalchemy import select, and_, or_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -142,14 +142,10 @@ async def list_tasks(
             )
         )
     elif status_filter == "pending":
-        # Include: pending tasks that are NOT recurring-completed-today
+        # Include: all pending tasks
+        # For recurring tasks with multiple daily occurrences, the frontend
+        # tracks completion via completions_today and generates virtual occurrences
         stmt = stmt.where(Task.status == "pending")
-        stmt = stmt.where(
-            or_(
-                Task.is_recurring == False,  # noqa: E712
-                ~Task.id.in_(completed_today_subquery),
-            )
-        )
     elif status_filter:
         stmt = stmt.where(Task.status == status_filter)
     elif not include_completed:
@@ -172,13 +168,14 @@ async def list_tasks(
     result = await db.execute(stmt)
     tasks = list(result.scalars().all())
     
-    # Get today's completions for recurring tasks (for setting completed_for_today flag)
+    # Get today's completion counts for recurring tasks
+    # This tracks how many times each recurring task was completed/skipped today
     recurring_task_ids = [t.id for t in tasks if t.is_recurring]
-    completed_today_task_ids: set[str] = set()
+    completions_today_count: dict[str, int] = {}
     
     if recurring_task_ids:
         completion_stmt = (
-            select(TaskCompletion.task_id)
+            select(TaskCompletion.task_id, func.count(TaskCompletion.id).label("count"))
             .where(
                 and_(
                     TaskCompletion.task_id.in_(recurring_task_ids),
@@ -187,9 +184,10 @@ async def list_tasks(
                     TaskCompletion.scheduled_for <= end_of_day,
                 )
             )
+            .group_by(TaskCompletion.task_id)
         )
         completion_result = await db.execute(completion_stmt)
-        completed_today_task_ids = set(row[0] for row in completion_result.fetchall())
+        completions_today_count = {row[0]: row[1] for row in completion_result.fetchall()}
     
     # Count stats
     pending_count = sum(1 for t in tasks if t.status == "pending")
@@ -197,7 +195,11 @@ async def list_tasks(
     
     return TaskListResponse(
         tasks=[
-            task_to_response(t, completed_for_today=t.id in completed_today_task_ids)
+            task_to_response(
+                t, 
+                completed_for_today=t.id in completions_today_count,
+                completions_today=completions_today_count.get(t.id, 0),
+            )
             for t in tasks
         ],
         total=len(tasks),
