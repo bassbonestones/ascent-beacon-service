@@ -14,8 +14,11 @@ from app.core.auth import CurrentUser
 from app.core.db import get_db
 from app.core.time import utc_now
 from app.models import Task
+from app.models.task_completion import TaskCompletion
 from app.schemas.tasks import (
+    CompleteTaskRequest,
     CreateTaskRequest,
+    SkipTaskRequest,
     TaskListResponse,
     TaskResponse,
     UpdateTaskRequest,
@@ -223,3 +226,129 @@ async def delete_task(
     await update_goal_progress(db, goal_id)
     
     await db.commit()
+
+
+@router.post(
+    "/{task_id}/complete",
+    response_model=TaskResponse,
+    summary="Complete task",
+)
+async def complete_task(
+    task_id: str,
+    request: CompleteTaskRequest,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> TaskResponse:
+    """
+    Mark a task as complete.
+    
+    For recurring tasks: records a completion but keeps task pending.
+    For one-time tasks: sets status to 'completed'.
+    """
+    task = await get_task_or_404(db, task_id, user.id)
+    
+    if task.is_recurring:
+        # Record completion for this occurrence
+        completion = TaskCompletion(
+            task_id=task.id,
+            status="completed",
+            completed_at=utc_now(),
+            scheduled_for=request.scheduled_for,
+        )
+        db.add(completion)
+        # Task stays pending for next occurrence
+    else:
+        # One-time task: mark as completed
+        task.status = "completed"
+        task.completed_at = utc_now()
+        task.updated_at = utc_now()
+    
+    # Update goal progress
+    await update_goal_progress(db, task.goal_id)
+    
+    await db.commit()
+    task = await get_task_or_404(db, task.id, user.id)
+    return task_to_response(task)
+
+
+@router.post(
+    "/{task_id}/skip",
+    response_model=TaskResponse,
+    summary="Skip task",
+)
+async def skip_task(
+    task_id: str,
+    request: SkipTaskRequest,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> TaskResponse:
+    """
+    Skip a task occurrence.
+    
+    For recurring tasks: records a skip but keeps task pending.
+    For one-time tasks: sets status to 'skipped'.
+    """
+    task = await get_task_or_404(db, task_id, user.id)
+    
+    if task.is_recurring:
+        # Record skip for this occurrence
+        completion = TaskCompletion(
+            task_id=task.id,
+            status="skipped",
+            skip_reason=request.reason,
+            completed_at=utc_now(),
+            scheduled_for=request.scheduled_for,
+        )
+        db.add(completion)
+        # Task stays pending for next occurrence
+    else:
+        # One-time task: mark as skipped
+        task.status = "skipped"
+        task.skip_reason = request.reason
+        task.updated_at = utc_now()
+    
+    await db.commit()
+    task = await get_task_or_404(db, task.id, user.id)
+    return task_to_response(task)
+
+
+@router.post(
+    "/{task_id}/reopen",
+    response_model=TaskResponse,
+    summary="Reopen task",
+)
+async def reopen_task(
+    task_id: str,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> TaskResponse:
+    """
+    Reopen a completed or skipped task.
+    
+    Only applies to one-time tasks. Recurring tasks stay pending.
+    """
+    task = await get_task_or_404(db, task_id, user.id)
+    
+    if task.is_recurring:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot reopen recurring tasks - they remain pending",
+        )
+    
+    if task.status == "pending":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Task is already pending",
+        )
+    
+    task.status = "pending"
+    task.completed_at = None
+    task.skip_reason = None
+    task.updated_at = utc_now()
+    
+    # Update goal progress
+    await update_goal_progress(db, task.goal_id)
+    
+    await db.commit()
+    task = await get_task_or_404(db, task.id, user.id)
+    return task_to_response(task)

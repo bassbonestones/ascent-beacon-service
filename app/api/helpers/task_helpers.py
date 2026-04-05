@@ -68,14 +68,19 @@ def task_to_response(task: Task) -> TaskResponse:
     )
 
 
-async def update_goal_progress(db: AsyncSession, goal_id: str) -> None:
+async def update_goal_progress(db: AsyncSession, goal_id: str | None) -> None:
     """
     Recalculate goal progress based on tasks.
     
     Progress calculation:
     - For time-based tasks: completed_time / total_time
     - For lightning tasks only: completed_count / total_count
+    
+    If goal_id is None (task not linked to a goal), do nothing.
     """
+    if goal_id is None:
+        return
+    
     # Get all tasks for this goal
     task_stmt = select(Task).where(Task.goal_id == goal_id)
     result = await db.execute(task_stmt)
