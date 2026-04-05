@@ -19,6 +19,7 @@ from app.models.task_completion import TaskCompletion
 from app.schemas.tasks import (
     CompleteTaskRequest,
     CreateTaskRequest,
+    ReopenTaskRequest,
     SkipTaskRequest,
     TaskListResponse,
     TaskResponse,
@@ -168,14 +169,16 @@ async def list_tasks(
     result = await db.execute(stmt)
     tasks = list(result.scalars().all())
     
-    # Get today's completion counts for recurring tasks
-    # This tracks how many times each recurring task was completed/skipped today
+    # Get today's completion info for recurring tasks
+    # This tracks both count and actual completion times
     recurring_task_ids = [t.id for t in tasks if t.is_recurring]
     completions_today_count: dict[str, int] = {}
+    completions_today_times: dict[str, list[str]] = {}
     
     if recurring_task_ids:
+        # Query for actual completion times (not just count)
         completion_stmt = (
-            select(TaskCompletion.task_id, func.count(TaskCompletion.id).label("count"))
+            select(TaskCompletion.task_id, TaskCompletion.scheduled_for)
             .where(
                 and_(
                     TaskCompletion.task_id.in_(recurring_task_ids),
@@ -184,10 +187,18 @@ async def list_tasks(
                     TaskCompletion.scheduled_for <= end_of_day,
                 )
             )
-            .group_by(TaskCompletion.task_id)
         )
         completion_result = await db.execute(completion_stmt)
-        completions_today_count = {row[0]: row[1] for row in completion_result.fetchall()}
+        
+        # Build both count and times dicts
+        for row in completion_result.fetchall():
+            task_id = row[0]
+            scheduled_for = row[1]
+            completions_today_count[task_id] = completions_today_count.get(task_id, 0) + 1
+            if task_id not in completions_today_times:
+                completions_today_times[task_id] = []
+            if scheduled_for:
+                completions_today_times[task_id].append(scheduled_for.isoformat())
     
     # Count stats
     pending_count = sum(1 for t in tasks if t.status == "pending")
@@ -199,6 +210,7 @@ async def list_tasks(
                 t, 
                 completed_for_today=t.id in completions_today_count,
                 completions_today=completions_today_count.get(t.id, 0),
+                completed_times_today=completions_today_times.get(t.id, []),
             )
             for t in tasks
         ],
@@ -381,22 +393,61 @@ async def skip_task(
 )
 async def reopen_task(
     task_id: str,
+    request: ReopenTaskRequest,
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> TaskResponse:
     """
     Reopen a completed or skipped task.
     
-    Only applies to one-time tasks. Recurring tasks stay pending.
+    For recurring tasks: deletes the completion record for the specified time slot.
+    For one-time tasks: sets status back to pending.
     """
     task = await get_task_or_404(db, task_id, user.id)
     
     if task.is_recurring:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot reopen recurring tasks - they remain pending",
+        # For recurring tasks, delete the completion for the specified time
+        if not request.scheduled_for:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="scheduled_for is required to reopen a recurring task occurrence",
+            )
+        
+        # Find and delete the completion record for this time
+        # Use a time window to match (within same minute)
+        target_time = request.scheduled_for.replace(second=0, microsecond=0)
+        window_start = target_time - timedelta(minutes=1)
+        window_end = target_time + timedelta(minutes=1)
+        
+        completion_stmt = (
+            select(TaskCompletion)
+            .where(
+                and_(
+                    TaskCompletion.task_id == task.id,
+                    TaskCompletion.scheduled_for >= window_start,
+                    TaskCompletion.scheduled_for <= window_end,
+                )
+            )
+            .order_by(TaskCompletion.completed_at.desc())
+            .limit(1)
         )
+        result = await db.execute(completion_stmt)
+        completion = result.scalar_one_or_none()
+        
+        if not completion:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No completion found for that time slot",
+            )
+        
+        await db.delete(completion)
+        await db.commit()
+        
+        # Return updated task (still pending, but with updated completion counts)
+        task = await get_task_or_404(db, task.id, user.id)
+        return task_to_response(task)
     
+    # For one-time tasks: reopen as before
     if task.status == "pending":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

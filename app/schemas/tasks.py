@@ -101,6 +101,10 @@ class TaskResponse(BaseModel):
     # Phase 4b: For recurring tasks with multiple daily occurrences, 
     # how many completions recorded for today
     completions_today: int = 0
+    
+    # Phase 4b: For interval/specific_times modes, the actual times completed today
+    # ISO datetime strings for each completion
+    completed_times_today: list[str] = []
 
     # Linked goal info (populated via eager loading)
     goal: GoalInfo | None = None
@@ -196,6 +200,15 @@ class SkipTaskRequest(BaseModel):
     scheduled_for: datetime | None = Field(
         default=None,
         description="For recurring tasks: which occurrence was skipped"
+    )
+
+
+class ReopenTaskRequest(BaseModel):
+    """Request to reopen a task."""
+
+    scheduled_for: datetime | None = Field(
+        default=None,
+        description="For recurring tasks: which occurrence to undo (delete completion)"
     )
 
 

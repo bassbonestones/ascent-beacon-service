@@ -42,6 +42,7 @@ def task_to_response(
     task: Task, 
     completed_for_today: bool = False,
     completions_today: int = 0,
+    completed_times_today: list[str] | None = None,
 ) -> TaskResponse:
     """Convert Task model to response schema.
     
@@ -50,6 +51,8 @@ def task_to_response(
         completed_for_today: For recurring tasks, whether it's been completed today
         completions_today: For recurring tasks with multiple daily occurrences,
                           how many have been completed today
+        completed_times_today: For interval/specific_times modes, the actual 
+                              ISO datetime strings of completions today
     """
     goal_info = None
     if task.goal:
@@ -78,6 +81,7 @@ def task_to_response(
         goal=goal_info,
         completed_for_today=completed_for_today if task.is_recurring else False,
         completions_today=completions_today if task.is_recurring else 0,
+        completed_times_today=completed_times_today or [] if task.is_recurring else [],
     )
 
 

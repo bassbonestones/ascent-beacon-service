@@ -468,7 +468,7 @@ async def test_reopen_completed_task(client: AsyncClient):
 
     # Complete then reopen
     await client.post(f"/tasks/{task_id}/complete", json={})
-    response = await client.post(f"/tasks/{task_id}/reopen")
+    response = await client.post(f"/tasks/{task_id}/reopen", json={})
 
     assert response.status_code == 200
     assert response.json()["status"] == "pending"
@@ -489,7 +489,7 @@ async def test_reopen_skipped_task(client: AsyncClient):
 
     # Skip then reopen
     await client.post(f"/tasks/{task_id}/skip", json={})
-    response = await client.post(f"/tasks/{task_id}/reopen")
+    response = await client.post(f"/tasks/{task_id}/reopen", json={})
 
     assert response.status_code == 200
     assert response.json()["status"] == "pending"
