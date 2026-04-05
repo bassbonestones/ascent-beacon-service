@@ -558,3 +558,122 @@ async def test_delete_task_updates_goal_progress(client: AsyncClient):
     # Goal should now be at 100% (only completed task remains)
     goal = (await client.get(f"/goals/{goal_id}")).json()
     assert goal["progress_cached"] == 100
+
+
+# ============================================================================
+# Recurring Task Completion Tests
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_recurring_task_completed_for_today_flag(client: AsyncClient):
+    """Test that recurring tasks show completed_for_today when completed today."""
+    # Create a recurring task
+    now = datetime.now(timezone.utc)
+    scheduled_at = now.replace(hour=9, minute=0, second=0, microsecond=0)
+
+    response = await client.post(
+        "/tasks",
+        json={
+            "title": "Daily standup",
+            "is_recurring": True,
+            "recurrence_rule": "FREQ=DAILY",
+            "scheduled_at": scheduled_at.isoformat(),
+            "scheduling_mode": "floating",
+        },
+    )
+    assert response.status_code == 201
+    task_id = response.json()["id"]
+
+    # Initially, completed_for_today should be False
+    list_response = await client.get("/tasks")
+    tasks = list_response.json()["tasks"]
+    task = next(t for t in tasks if t["id"] == task_id)
+    assert task["completed_for_today"] is False
+
+    # Complete the task for today
+    complete_response = await client.post(
+        f"/tasks/{task_id}/complete",
+        json={"scheduled_for": scheduled_at.isoformat()},
+    )
+    # The complete response itself should have completed_for_today = True
+    completed_task = complete_response.json()
+    assert completed_task["completed_for_today"] is True
+    assert completed_task["status"] == "pending"  # Recurring task stays pending
+
+    # Now completed_for_today should be True in list
+    list_response = await client.get("/tasks")
+    tasks = list_response.json()["tasks"]
+    task = next(t for t in tasks if t["id"] == task_id)
+    assert task["completed_for_today"] is True
+    assert task["status"] == "pending"  # Recurring task stays pending
+
+
+@pytest.mark.asyncio
+async def test_completed_filter_includes_recurring_tasks_completed_today(
+    client: AsyncClient,
+):
+    """Test that status=completed includes recurring tasks completed today."""
+    now = datetime.now(timezone.utc)
+    scheduled_at = now.replace(hour=9, minute=0, second=0, microsecond=0)
+
+    # Create a recurring task
+    response = await client.post(
+        "/tasks",
+        json={
+            "title": "Daily exercise",
+            "is_recurring": True,
+            "recurrence_rule": "FREQ=DAILY",
+            "scheduled_at": scheduled_at.isoformat(),
+            "scheduling_mode": "floating",
+        },
+    )
+    task_id = response.json()["id"]
+
+    # Complete it for today
+    await client.post(
+        f"/tasks/{task_id}/complete",
+        json={"scheduled_for": scheduled_at.isoformat()},
+    )
+
+    # Filter by completed - should include the recurring task
+    list_response = await client.get("/tasks?status=completed")
+    tasks = list_response.json()["tasks"]
+    assert len(tasks) >= 1
+    task = next((t for t in tasks if t["id"] == task_id), None)
+    assert task is not None
+    assert task["completed_for_today"] is True
+
+
+@pytest.mark.asyncio
+async def test_pending_filter_excludes_recurring_tasks_completed_today(
+    client: AsyncClient,
+):
+    """Test that status=pending excludes recurring tasks completed today."""
+    now = datetime.now(timezone.utc)
+    scheduled_at = now.replace(hour=9, minute=0, second=0, microsecond=0)
+
+    # Create a recurring task
+    response = await client.post(
+        "/tasks",
+        json={
+            "title": "Daily meditation",
+            "is_recurring": True,
+            "recurrence_rule": "FREQ=DAILY",
+            "scheduled_at": scheduled_at.isoformat(),
+            "scheduling_mode": "floating",
+        },
+    )
+    task_id = response.json()["id"]
+
+    # Complete it for today
+    await client.post(
+        f"/tasks/{task_id}/complete",
+        json={"scheduled_for": scheduled_at.isoformat()},
+    )
+
+    # Filter by pending - should NOT include the recurring task
+    list_response = await client.get("/tasks?status=pending")
+    tasks = list_response.json()["tasks"]
+    task = next((t for t in tasks if t["id"] == task_id), None)
+    assert task is None

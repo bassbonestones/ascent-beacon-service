@@ -94,6 +94,9 @@ class TaskResponse(BaseModel):
 
     # Computed properties
     is_lightning: bool = False
+    
+    # Phase 4b: For recurring tasks, indicates if completed for today
+    completed_for_today: bool = False
 
     # Linked goal info (populated via eager loading)
     goal: GoalInfo | None = None
@@ -270,3 +273,14 @@ class CompletionHistoryResponse(BaseModel):
     period: TaskStatsPeriod
     days: list[DailyCompletionStatus]
     summary: TaskStatsResponse
+
+
+# ============================================================================
+# Time Machine Schemas
+# ============================================================================
+
+
+class DeleteFutureCompletionsResponse(BaseModel):
+    """Response for deleting future completions (time machine reset)."""
+
+    deleted_count: int

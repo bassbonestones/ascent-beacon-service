@@ -3,6 +3,7 @@ Tasks API endpoints.
 
 Provides CRUD operations for tasks linked to goals.
 """
+from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -102,6 +103,26 @@ async def list_tasks(
     ),
 ) -> TaskListResponse:
     """Get all tasks for the current user, with optional filters."""
+    # Get today's date range for recurring task completion check
+    now = datetime.now(timezone.utc)
+    start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_of_day = start_of_day + timedelta(days=1) - timedelta(microseconds=1)
+    
+    # First, get IDs of recurring tasks completed or skipped today
+    completed_today_subquery = (
+        select(TaskCompletion.task_id)
+        .join(Task, Task.id == TaskCompletion.task_id)
+        .where(
+            and_(
+                Task.user_id == user.id,
+                Task.is_recurring == True,  # noqa: E712
+                TaskCompletion.status.in_(["completed", "skipped"]),
+                TaskCompletion.scheduled_for >= start_of_day,
+                TaskCompletion.scheduled_for <= end_of_day,
+            )
+        )
+    )
+    
     stmt = (
         select(Task)
         .options(selectinload(Task.goal))
@@ -112,13 +133,29 @@ async def list_tasks(
     if goal_id:
         stmt = stmt.where(Task.goal_id == goal_id)
     
-    if status_filter:
+    if status_filter == "completed":
+        # Include: non-recurring completed tasks OR recurring tasks completed today
+        stmt = stmt.where(
+            or_(
+                and_(Task.is_recurring == False, Task.status == "completed"),  # noqa: E712
+                Task.id.in_(completed_today_subquery),
+            )
+        )
+    elif status_filter == "pending":
+        # Include: pending tasks that are NOT recurring-completed-today
+        stmt = stmt.where(Task.status == "pending")
+        stmt = stmt.where(
+            or_(
+                Task.is_recurring == False,  # noqa: E712
+                ~Task.id.in_(completed_today_subquery),
+            )
+        )
+    elif status_filter:
         stmt = stmt.where(Task.status == status_filter)
     elif not include_completed:
         stmt = stmt.where(Task.status != "completed")
     
     if scheduled_after:
-        from datetime import datetime
         try:
             after_dt = datetime.fromisoformat(scheduled_after.replace("Z", "+00:00"))
             stmt = stmt.where(Task.scheduled_at >= after_dt)
@@ -126,7 +163,6 @@ async def list_tasks(
             pass
     
     if scheduled_before:
-        from datetime import datetime
         try:
             before_dt = datetime.fromisoformat(scheduled_before.replace("Z", "+00:00"))
             stmt = stmt.where(Task.scheduled_at <= before_dt)
@@ -136,12 +172,34 @@ async def list_tasks(
     result = await db.execute(stmt)
     tasks = list(result.scalars().all())
     
+    # Get today's completions for recurring tasks (for setting completed_for_today flag)
+    recurring_task_ids = [t.id for t in tasks if t.is_recurring]
+    completed_today_task_ids: set[str] = set()
+    
+    if recurring_task_ids:
+        completion_stmt = (
+            select(TaskCompletion.task_id)
+            .where(
+                and_(
+                    TaskCompletion.task_id.in_(recurring_task_ids),
+                    TaskCompletion.status.in_(["completed", "skipped"]),
+                    TaskCompletion.scheduled_for >= start_of_day,
+                    TaskCompletion.scheduled_for <= end_of_day,
+                )
+            )
+        )
+        completion_result = await db.execute(completion_stmt)
+        completed_today_task_ids = set(row[0] for row in completion_result.fetchall())
+    
     # Count stats
     pending_count = sum(1 for t in tasks if t.status == "pending")
     completed_count = sum(1 for t in tasks if t.status == "completed")
     
     return TaskListResponse(
-        tasks=[task_to_response(t) for t in tasks],
+        tasks=[
+            task_to_response(t, completed_for_today=t.id in completed_today_task_ids)
+            for t in tasks
+        ],
         total=len(tasks),
         pending_count=pending_count,
         completed_count=completed_count,
@@ -268,7 +326,8 @@ async def complete_task(
     
     await db.commit()
     task = await get_task_or_404(db, task.id, user.id)
-    return task_to_response(task)
+    # For recurring tasks, we just completed it for today
+    return task_to_response(task, completed_for_today=task.is_recurring)
 
 
 @router.post(
@@ -309,7 +368,8 @@ async def skip_task(
     
     await db.commit()
     task = await get_task_or_404(db, task.id, user.id)
-    return task_to_response(task)
+    # For recurring tasks, skip also counts as "done for today"
+    return task_to_response(task, completed_for_today=task.is_recurring)
 
 
 @router.post(
@@ -352,3 +412,72 @@ async def reopen_task(
     await db.commit()
     task = await get_task_or_404(db, task.id, user.id)
     return task_to_response(task)
+
+
+# ============================================================================
+# Time Machine Endpoints
+# ============================================================================
+
+
+@router.delete(
+    "/completions/future",
+    summary="Delete future completions",
+)
+async def delete_future_completions(
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    after_date: str | None = Query(
+        None,
+        description="Delete completions after this date (YYYY-MM-DD). Defaults to today if not provided.",
+    ),
+) -> dict[str, int]:
+    """
+    Delete all task completions dated after the specified date.
+    
+    Used by the Time Machine feature to:
+    - Reset to present (delete all future completions)
+    - Revert to a specific date (delete completions after that date only)
+    
+    Returns the count of deleted records.
+    """
+    from datetime import date, datetime
+    from sqlalchemy import delete, func
+    
+    # Parse the after_date or default to today
+    if after_date:
+        try:
+            cutoff_date = datetime.strptime(after_date, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid date format. Use YYYY-MM-DD.",
+            )
+    else:
+        cutoff_date = date.today()
+    
+    # First count how many will be deleted
+    count_stmt = select(func.count()).select_from(TaskCompletion).where(
+        and_(
+            TaskCompletion.task_id.in_(
+                select(Task.id).where(Task.user_id == user.id)
+            ),
+            func.date(TaskCompletion.scheduled_for) > cutoff_date
+        )
+    )
+    result = await db.execute(count_stmt)
+    deleted_count = result.scalar() or 0
+    
+    # Delete the future completions
+    if deleted_count > 0:
+        delete_stmt = delete(TaskCompletion).where(
+            and_(
+                TaskCompletion.task_id.in_(
+                    select(Task.id).where(Task.user_id == user.id)
+                ),
+                func.date(TaskCompletion.scheduled_for) > cutoff_date
+            )
+        )
+        await db.execute(delete_stmt)
+        await db.commit()
+    
+    return {"deleted_count": deleted_count}

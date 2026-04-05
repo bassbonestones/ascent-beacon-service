@@ -38,8 +38,13 @@ async def get_goal_for_task_or_404(
     return goal
 
 
-def task_to_response(task: Task) -> TaskResponse:
-    """Convert Task model to response schema."""
+def task_to_response(task: Task, completed_for_today: bool = False) -> TaskResponse:
+    """Convert Task model to response schema.
+    
+    Args:
+        task: The Task model instance
+        completed_for_today: For recurring tasks, whether it's been completed today
+    """
     goal_info = None
     if task.goal:
         goal_info = GoalInfo(
@@ -65,6 +70,7 @@ def task_to_response(task: Task) -> TaskResponse:
         updated_at=task.updated_at,
         is_lightning=task.is_lightning,
         goal=goal_info,
+        completed_for_today=completed_for_today if task.is_recurring else False,
     )
 
 
