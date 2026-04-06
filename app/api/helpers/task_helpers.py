@@ -71,6 +71,7 @@ def task_to_response(
         duration_minutes=task.duration_minutes,
         status=task.status,
         scheduled_at=task.scheduled_at,
+        scheduling_mode=task.scheduling_mode,
         is_recurring=task.is_recurring,
         recurrence_rule=task.recurrence_rule,
         notify_before_minutes=task.notify_before_minutes,

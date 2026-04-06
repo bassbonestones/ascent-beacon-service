@@ -413,12 +413,21 @@ async def reopen_task(
                 detail="scheduled_for is required to reopen a recurring task occurrence",
             )
         
-        # Find and delete the completion record for this time
-        # Use a time window to match (within same minute)
-        target_time = request.scheduled_for.replace(second=0, microsecond=0)
-        window_start = target_time - timedelta(minutes=1)
-        window_end = target_time + timedelta(minutes=1)
+        # Determine window size based on whether task has a specific scheduled time
+        # For tasks without scheduled_at (anytime tasks), use the whole day
+        # For tasks with scheduled_at, use a 2-minute window around the time
+        target_time = request.scheduled_for
+        if task.scheduled_at is None:
+            # No specific time: use day-wide window
+            window_start = target_time.replace(hour=0, minute=0, second=0, microsecond=0)
+            window_end = target_time.replace(hour=23, minute=59, second=59, microsecond=999999)
+        else:
+            # Specific time: use a narrow window (within same minute)
+            target_time = target_time.replace(second=0, microsecond=0)
+            window_start = target_time - timedelta(minutes=1)
+            window_end = target_time + timedelta(minutes=1)
         
+        # Find and delete the completion record within the window
         completion_stmt = (
             select(TaskCompletion)
             .where(

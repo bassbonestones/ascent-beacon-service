@@ -11,7 +11,10 @@ from pydantic import BaseModel, ConfigDict, Field
 # Type Aliases
 # ============================================================================
 
-SchedulingMode = Literal["floating", "fixed"]
+# 'floating' = time-of-day (adjusts with timezone)
+# 'fixed' = fixed time (timezone-locked)
+# 'date_only' = only date is set, no specific time
+SchedulingMode = Literal["floating", "fixed", "date_only"]
 TaskStatus = Literal["pending", "completed", "skipped"]
 CompletionStatus = Literal["completed", "skipped"]
 
