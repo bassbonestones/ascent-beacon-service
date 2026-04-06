@@ -108,6 +108,11 @@ class TaskResponse(BaseModel):
     # Phase 4b: For interval/specific_times modes, the actual times completed today
     # ISO datetime strings for each completion
     completed_times_today: list[str] = []
+    
+    # Phase 4b: For recurring tasks, completions indexed by date (YYYY-MM-DD)
+    # Maps date string to list of ISO datetime strings for completions on that date
+    # Used for Upcoming view to show future occurrences as completed
+    completions_by_date: dict[str, list[str]] = {}
 
     # Linked goal info (populated via eager loading)
     goal: GoalInfo | None = None

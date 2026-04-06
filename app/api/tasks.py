@@ -108,8 +108,10 @@ async def list_tasks(
     now = datetime.now(timezone.utc)
     start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
     end_of_day = start_of_day + timedelta(days=1) - timedelta(microseconds=1)
+    # Extended range for Upcoming view (14 days)
+    end_of_range = start_of_day + timedelta(days=15)
     
-    # First, get IDs of recurring tasks completed or skipped today
+    # Get IDs of recurring tasks completed or skipped today
     completed_today_subquery = (
         select(TaskCompletion.task_id)
         .join(Task, Task.id == TaskCompletion.task_id)
@@ -120,6 +122,21 @@ async def list_tasks(
                 TaskCompletion.status.in_(["completed", "skipped"]),
                 TaskCompletion.scheduled_for >= start_of_day,
                 TaskCompletion.scheduled_for <= end_of_day,
+            )
+        )
+    )
+    
+    # Get IDs of recurring tasks completed in the upcoming range (for Upcoming view)
+    completed_in_range_subquery = (
+        select(TaskCompletion.task_id)
+        .join(Task, Task.id == TaskCompletion.task_id)
+        .where(
+            and_(
+                Task.user_id == user.id,
+                Task.is_recurring == True,  # noqa: E712
+                TaskCompletion.status.in_(["completed", "skipped"]),
+                TaskCompletion.scheduled_for >= start_of_day,
+                TaskCompletion.scheduled_for < end_of_range,
             )
         )
     )
@@ -135,11 +152,12 @@ async def list_tasks(
         stmt = stmt.where(Task.goal_id == goal_id)
     
     if status_filter == "completed":
-        # Include: non-recurring completed tasks OR recurring tasks completed today
+        # Include: non-recurring completed tasks OR recurring tasks completed in range
+        # This allows Upcoming view to show recurring tasks completed for future dates
         stmt = stmt.where(
             or_(
                 and_(Task.is_recurring == False, Task.status == "completed"),  # noqa: E712
-                Task.id.in_(completed_today_subquery),
+                Task.id.in_(completed_in_range_subquery),
             )
         )
     elif status_filter == "pending":
@@ -169,14 +187,17 @@ async def list_tasks(
     result = await db.execute(stmt)
     tasks = list(result.scalars().all())
     
-    # Get today's completion info for recurring tasks
-    # This tracks both count and actual completion times
+    # Get completion info for recurring tasks
+    # Query completions for today AND the next 14 days (for Upcoming view)
     recurring_task_ids = [t.id for t in tasks if t.is_recurring]
     completions_today_count: dict[str, int] = {}
     completions_today_times: dict[str, list[str]] = {}
+    completions_by_date_map: dict[str, dict[str, list[str]]] = {}  # task_id -> date -> times
     
     if recurring_task_ids:
-        # Query for actual completion times (not just count)
+        # Query for completions in the next 14 days (including today)
+        # (end_of_range is defined at the top of the function)
+        
         completion_stmt = (
             select(TaskCompletion.task_id, TaskCompletion.scheduled_for)
             .where(
@@ -184,21 +205,39 @@ async def list_tasks(
                     TaskCompletion.task_id.in_(recurring_task_ids),
                     TaskCompletion.status.in_(["completed", "skipped"]),
                     TaskCompletion.scheduled_for >= start_of_day,
-                    TaskCompletion.scheduled_for <= end_of_day,
+                    TaskCompletion.scheduled_for < end_of_range,
                 )
             )
         )
         completion_result = await db.execute(completion_stmt)
         
-        # Build both count and times dicts
+        # Build completion data structures
         for row in completion_result.fetchall():
             task_id = row[0]
             scheduled_for = row[1]
-            completions_today_count[task_id] = completions_today_count.get(task_id, 0) + 1
-            if task_id not in completions_today_times:
-                completions_today_times[task_id] = []
+            
             if scheduled_for:
-                completions_today_times[task_id].append(scheduled_for.isoformat())
+                # Ensure scheduled_for is timezone-aware for comparison
+                if scheduled_for.tzinfo is None:
+                    scheduled_for = scheduled_for.replace(tzinfo=timezone.utc)
+                
+                # Initialize task entry if needed
+                if task_id not in completions_by_date_map:
+                    completions_by_date_map[task_id] = {}
+                
+                # Get date key (YYYY-MM-DD in UTC)
+                date_key = scheduled_for.strftime("%Y-%m-%d")
+                
+                if date_key not in completions_by_date_map[task_id]:
+                    completions_by_date_map[task_id][date_key] = []
+                completions_by_date_map[task_id][date_key].append(scheduled_for.isoformat())
+                
+                # Also track today-specific counts for backward compat
+                if start_of_day <= scheduled_for <= end_of_day:
+                    completions_today_count[task_id] = completions_today_count.get(task_id, 0) + 1
+                    if task_id not in completions_today_times:
+                        completions_today_times[task_id] = []
+                    completions_today_times[task_id].append(scheduled_for.isoformat())
     
     # Count stats
     pending_count = sum(1 for t in tasks if t.status == "pending")
@@ -211,6 +250,7 @@ async def list_tasks(
                 completed_for_today=t.id in completions_today_count,
                 completions_today=completions_today_count.get(t.id, 0),
                 completed_times_today=completions_today_times.get(t.id, []),
+                completions_by_date=completions_by_date_map.get(t.id, {}),
             )
             for t in tasks
         ],
