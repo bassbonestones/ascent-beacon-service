@@ -16,6 +16,8 @@ if TYPE_CHECKING:
     from app.models.task import Task
     from app.models.assistant_session import AssistantSession
     from app.models.stt_request import STTRequest
+    from app.models.occurrence_preference import OccurrencePreference
+    from app.models.daily_sort_override import DailySortOverride
 
 
 class User(Base, UUIDMixin, TimestampMixin):
@@ -65,6 +67,16 @@ class User(Base, UUIDMixin, TimestampMixin):
     )
     tasks: Mapped[list["Task"]] = relationship(
         "Task",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+    occurrence_preferences: Mapped[list["OccurrencePreference"]] = relationship(
+        "OccurrencePreference",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+    daily_sort_overrides: Mapped[list["DailySortOverride"]] = relationship(
+        "DailySortOverride",
         back_populates="user",
         cascade="all, delete-orphan",
     )

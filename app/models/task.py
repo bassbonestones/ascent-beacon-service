@@ -13,6 +13,8 @@ if TYPE_CHECKING:
     from app.models.goal import Goal
     from app.models.task_completion import TaskCompletion
     from app.models.user import User
+    from app.models.occurrence_preference import OccurrencePreference
+    from app.models.daily_sort_override import DailySortOverride
 
 
 class Task(Base, UUIDMixin, TimestampMixin):
@@ -102,6 +104,16 @@ class Task(Base, UUIDMixin, TimestampMixin):
         back_populates="task",
         cascade="all, delete-orphan",
         order_by="TaskCompletion.completed_at.desc()",
+    )
+    occurrence_preferences: Mapped[List["OccurrencePreference"]] = relationship(
+        "OccurrencePreference",
+        back_populates="task",
+        cascade="all, delete-orphan",
+    )
+    daily_sort_overrides: Mapped[List["DailySortOverride"]] = relationship(
+        "DailySortOverride",
+        back_populates="task",
+        cascade="all, delete-orphan",
     )
 
     __table_args__ = (

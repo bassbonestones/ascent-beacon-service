@@ -12,6 +12,8 @@ from app.models.goal import Goal
 from app.models.goal_priority_link import GoalPriorityLink
 from app.models.task import Task
 from app.models.task_completion import TaskCompletion
+from app.models.occurrence_preference import OccurrencePreference
+from app.models.daily_sort_override import DailySortOverride
 from app.models.embedding import Embedding
 from app.models.assistant_session import AssistantSession
 from app.models.assistant_turn import AssistantTurn
@@ -35,6 +37,8 @@ __all__ = [
     "GoalPriorityLink",
     "Task",
     "TaskCompletion",
+    "OccurrencePreference",
+    "DailySortOverride",
     "Embedding",
     "AssistantSession",
     "AssistantTurn",

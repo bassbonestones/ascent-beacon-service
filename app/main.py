@@ -24,6 +24,7 @@ from app.api import (
     tasks_status,
     tasks_views,
     task_stats,
+    occurrence_ordering,
 )
 
 
@@ -76,6 +77,7 @@ app.include_router(assistant.router)
 app.include_router(recommendations.router)
 app.include_router(discovery.router)
 app.include_router(goals.router)
+app.include_router(occurrence_ordering.router)  # Before tasks to avoid {task_id} conflict
 app.include_router(tasks.router)
 app.include_router(tasks_status.router)
 app.include_router(tasks_views.router)
