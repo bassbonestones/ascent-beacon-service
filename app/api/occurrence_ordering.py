@@ -21,6 +21,9 @@ from app.schemas.occurrence_ordering import (
     ReorderOccurrencesResponse,
     DayOrderResponse,
     DayOrderItem,
+    DateRangeOrderResponse,
+    PermanentOrderItem,
+    DateOverrideItem,
 )
 
 router = APIRouter(prefix="/tasks", tags=["task-ordering"])
@@ -111,6 +114,9 @@ async def _save_permanent_preferences(
     This is a hybrid save: recurring tasks get permanent preferences that apply to
     all future occurrences, while single (non-recurring) tasks get daily overrides
     since they only appear on one day.
+    
+    When saving permanent preferences for recurring tasks, any existing daily overrides
+    for those tasks on this date are removed so the permanent preferences take effect.
     """
     import logging
     logger = logging.getLogger(__name__)
@@ -135,24 +141,30 @@ async def _save_permanent_preferences(
     logger.info(f"[HYBRID SAVE] recurring_occs: {[(o.task_id, o.occurrence_index) for o in recurring_occs]}")
     logger.info(f"[HYBRID SAVE] single_occs: {[(o.task_id, o.occurrence_index) for o in single_occs]}")
     
-    # Separate recurring and single tasks
-    recurring_occs = []
-    single_occs = []
-    for occ in request.occurrences:
-        if task_recurring_map.get(occ.task_id, False):
-            recurring_occs.append(occ)
-        else:
-            single_occs.append(occ)
-    
     now = utc_now()
     
     # Save permanent preferences for recurring tasks
     if recurring_occs:
+        recurring_task_ids = [occ.task_id for occ in recurring_occs]
+        
+        # Delete any existing daily overrides for recurring tasks on this date
+        # This ensures permanent preferences take effect without being overshadowed
+        await db.execute(
+            delete(DailySortOverride).where(
+                and_(
+                    DailySortOverride.user_id == user_id,
+                    DailySortOverride.override_date == request.date,
+                    DailySortOverride.task_id.in_(recurring_task_ids),
+                )
+            )
+        )
+        logger.info(f"[HYBRID SAVE] Deleted daily overrides for recurring tasks on {request.date}")
+        
         # Get existing preferences for recurring task/occurrence combos
         stmt = select(OccurrencePreference).where(
             and_(
                 OccurrencePreference.user_id == user_id,
-                OccurrencePreference.task_id.in_([occ.task_id for occ in recurring_occs]),
+                OccurrencePreference.task_id.in_(recurring_task_ids),
             )
         )
         result = await db.execute(stmt)
@@ -316,3 +328,79 @@ async def clear_day_order(
         )
     )
     await db.commit()
+
+
+@router.get(
+    "/occurrence-order/range",
+    response_model=DateRangeOrderResponse,
+    summary="Get task occurrence order for a date range",
+    description="""
+    Get ordering info for a range of dates in a single request.
+    
+    Returns:
+    - permanent_order: Preferences that apply to all dates
+    - daily_overrides: Dict mapping dates to their overrides (only dates with overrides are included)
+    
+    The frontend should:
+    1. For a given date, check if daily_overrides has entries for that date
+    2. If yes, use those overrides (they take precedence)
+    3. If no, use permanent_order
+    """,
+)
+async def get_date_range_order(
+    start_date: Annotated[str, Query(pattern=r"^\d{4}-\d{2}-\d{2}$")],
+    end_date: Annotated[str, Query(pattern=r"^\d{4}-\d{2}-\d{2}$")],
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> DateRangeOrderResponse:
+    """Get task occurrence order for a date range."""
+    
+    # Get all permanent preferences for this user
+    prefs_stmt = select(OccurrencePreference).where(
+        OccurrencePreference.user_id == user.id
+    ).order_by(OccurrencePreference.sequence_number)
+    
+    prefs_result = await db.execute(prefs_stmt)
+    prefs = list(prefs_result.scalars().all())
+    
+    permanent_order = [
+        PermanentOrderItem(
+            task_id=p.task_id,
+            occurrence_index=p.occurrence_index,
+            sequence_number=p.sequence_number,
+        )
+        for p in prefs
+    ]
+    
+    # Get daily overrides within the date range
+    overrides_stmt = select(DailySortOverride).where(
+        and_(
+            DailySortOverride.user_id == user.id,
+            DailySortOverride.override_date >= start_date,
+            DailySortOverride.override_date <= end_date,
+        )
+    ).order_by(DailySortOverride.override_date, DailySortOverride.sort_position)
+    
+    overrides_result = await db.execute(overrides_stmt)
+    overrides = list(overrides_result.scalars().all())
+    
+    # Group overrides by date
+    daily_overrides: dict[str, list[DateOverrideItem]] = {}
+    for override in overrides:
+        date_key = override.override_date
+        if date_key not in daily_overrides:
+            daily_overrides[date_key] = []
+        daily_overrides[date_key].append(
+            DateOverrideItem(
+                task_id=override.task_id,
+                occurrence_index=override.occurrence_index,
+                sort_position=override.sort_position,
+            )
+        )
+    
+    return DateRangeOrderResponse(
+        start_date=start_date,
+        end_date=end_date,
+        permanent_order=permanent_order,
+        daily_overrides=daily_overrides,
+    )

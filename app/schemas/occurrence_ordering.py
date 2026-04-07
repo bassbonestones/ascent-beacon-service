@@ -108,3 +108,39 @@ class DayOrderResponse(BaseModel):
     has_overrides: bool = Field(
         description="True if any overrides exist for this date"
     )
+
+
+class PermanentOrderItem(BaseModel):
+    """Single permanent preference item."""
+
+    task_id: str
+    occurrence_index: int
+    sequence_number: float
+
+
+class DateOverrideItem(BaseModel):
+    """Daily override for a specific task occurrence."""
+
+    task_id: str
+    occurrence_index: int
+    sort_position: int
+
+
+class DateRangeOrderResponse(BaseModel):
+    """Response with ordering info for a date range.
+    
+    This returns both permanent preferences and daily overrides
+    for efficient bulk loading. The frontend should:
+    1. For a given date, check if daily_overrides has entries for that date
+    2. If yes, use those overrides (they take precedence)
+    3. If no, use permanent_order
+    """
+
+    start_date: str
+    end_date: str
+    permanent_order: list[PermanentOrderItem] = Field(
+        description="Permanent preferences that apply to all dates"
+    )
+    daily_overrides: dict[str, list[DateOverrideItem]] = Field(
+        description="Date -> overrides mapping. Only dates with overrides are included."
+    )

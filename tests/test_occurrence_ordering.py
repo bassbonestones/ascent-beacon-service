@@ -501,3 +501,78 @@ async def test_hybrid_save_permanent_with_mixed_tasks(client: AsyncClient, mixed
     # They should be in order: recurring[0] (position 2), recurring[1] (position 4)
     assert data["items"][0]["task_id"] == recurring[0]
     assert data["items"][1]["task_id"] == recurring[1]
+
+
+# ============================================================================
+# Range API Tests
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_get_date_range_order_empty(client: AsyncClient):
+    """Test getting order for a date range when nothing is saved."""
+    response = await client.get(
+        "/tasks/occurrence-order/range",
+        params={"start_date": "2026-04-07", "end_date": "2026-04-14"},
+    )
+    
+    assert response.status_code == 200
+    data = response.json()
+    assert data["start_date"] == "2026-04-07"
+    assert data["end_date"] == "2026-04-14"
+    assert data["permanent_order"] == []
+    assert data["daily_overrides"] == {}
+
+
+@pytest.mark.asyncio
+async def test_get_date_range_order_with_data(client: AsyncClient, recurring_tasks: list[str]):
+    """Test getting order for a date range with both permanent and daily overrides."""
+    # Save permanent preferences for recurring tasks
+    await client.post(
+        "/tasks/reorder-occurrences",
+        json={
+            "date": "2026-04-07",
+            "occurrences": [
+                {"task_id": recurring_tasks[1], "occurrence_index": 0},
+                {"task_id": recurring_tasks[0], "occurrence_index": 0},
+            ],
+            "save_mode": "permanent",
+        },
+    )
+    
+    # Save daily overrides for a specific date
+    await client.post(
+        "/tasks/reorder-occurrences",
+        json={
+            "date": "2026-04-10",
+            "occurrences": [
+                {"task_id": recurring_tasks[0], "occurrence_index": 0},
+                {"task_id": recurring_tasks[1], "occurrence_index": 0},
+            ],
+            "save_mode": "today",
+        },
+    )
+    
+    # Get range order
+    response = await client.get(
+        "/tasks/occurrence-order/range",
+        params={"start_date": "2026-04-07", "end_date": "2026-04-14"},
+    )
+    
+    assert response.status_code == 200
+    data = response.json()
+    
+    # Should have permanent preferences
+    assert len(data["permanent_order"]) == 2
+    assert data["permanent_order"][0]["task_id"] == recurring_tasks[1]
+    assert data["permanent_order"][1]["task_id"] == recurring_tasks[0]
+    
+    # Should have daily overrides for 2026-04-10
+    assert "2026-04-10" in data["daily_overrides"]
+    assert len(data["daily_overrides"]["2026-04-10"]) == 2
+    assert data["daily_overrides"]["2026-04-10"][0]["task_id"] == recurring_tasks[0]
+    assert data["daily_overrides"]["2026-04-10"][1]["task_id"] == recurring_tasks[1]
+    
+    # Should NOT have overrides for other dates
+    assert "2026-04-07" not in data["daily_overrides"]
+    assert "2026-04-08" not in data["daily_overrides"]
