@@ -102,11 +102,32 @@ async def list_tasks(
     scheduled_before: str | None = Query(
         default=None, description="Tasks scheduled before this datetime (ISO)"
     ),
+    client_today: str | None = Query(
+        default=None, description="Client's local date as YYYY-MM-DD for 'today' calculations"
+    ),
 ) -> TaskListResponse:
     """Get all tasks for the current user, with optional filters."""
-    # Get today's date range for recurring task completion check
+    # Determine "today" - prefer client's local date if provided
+    # This fixes timezone issues where UTC "today" differs from user's local "today"
+    if client_today:
+        # Parse client's date string (YYYY-MM-DD)
+        try:
+            today_date = datetime.strptime(client_today, "%Y-%m-%d").date()
+        except ValueError:
+            # Invalid format, fall back to UTC
+            now = datetime.now(timezone.utc)
+            today_date = now.date()
+    else:
+        now = datetime.now(timezone.utc)
+        today_date = now.date()
+    
+    # Convert to "today" string for date comparisons
+    today_str = today_date.strftime("%Y-%m-%d")
+    
+    # For datetime range queries (used in include_completed filter), use UTC bounds
+    # but extend back to capture any completion on the client's "today"
     now = datetime.now(timezone.utc)
-    start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    start_of_day = datetime.combine(today_date, datetime.min.time(), tzinfo=timezone.utc)
     end_of_day = start_of_day + timedelta(days=1) - timedelta(microseconds=1)
     # Extended range for Upcoming view (14 days)
     end_of_range = start_of_day + timedelta(days=15)
@@ -225,15 +246,19 @@ async def list_tasks(
                 if task_id not in completions_by_date_map:
                     completions_by_date_map[task_id] = {}
                 
-                # Get date key (YYYY-MM-DD in UTC)
+                # Get date key (YYYY-MM-DD) - extract from the ISO string to preserve
+                # the date as the client intended it, not as UTC day
+                # The client sends scheduled_for as local midnight converted to UTC,
+                # so we want the DATE portion of that timestamp
                 date_key = scheduled_for.strftime("%Y-%m-%d")
                 
                 if date_key not in completions_by_date_map[task_id]:
                     completions_by_date_map[task_id][date_key] = []
                 completions_by_date_map[task_id][date_key].append(scheduled_for.isoformat())
                 
-                # Also track today-specific counts for backward compat
-                if start_of_day <= scheduled_for <= end_of_day:
+                # Track today-specific counts using date string comparison (not datetime range)
+                # This matches the client's "today" regardless of UTC offset
+                if date_key == today_str:
                     completions_today_count[task_id] = completions_today_count.get(task_id, 0) + 1
                     if task_id not in completions_today_times:
                         completions_today_times[task_id] = []

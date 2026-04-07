@@ -686,3 +686,138 @@ async def test_pending_filter_includes_recurring_tasks_with_completion_info(
     assert task is not None
     assert task["completed_for_today"] is True
     assert task["completions_today"] == 1
+
+
+@pytest.mark.asyncio
+async def test_client_today_timezone_handling(client: AsyncClient):
+    """Test that client_today parameter correctly handles timezone edge cases.
+    
+    Scenario: User is in CDT (UTC-5) at 8:30 PM local on April 6.
+    - Local time: April 6, 8:30 PM CDT
+    - UTC time: April 7, 1:30 AM UTC
+    
+    The user completes a task for April 6 (their local date). The completion
+    should be stored with a scheduled_for that, when queried with client_today="2026-04-06",
+    returns completed_for_today=True.
+    """
+    # Simulate: User at 8:30 PM CDT on April 6 = 1:30 AM UTC April 7
+    # When user creates a completion for "today" (April 6 local), the frontend
+    # sends scheduled_for as April 6 00:00 LOCAL = April 6 05:00 UTC
+    
+    # Create a recurring task
+    # Note: scheduled_at doesn't matter for this test - we're testing the completion
+    response = await client.post(
+        "/tasks",
+        json={
+            "title": "Daily journal",
+            "is_recurring": True,
+            "recurrence_rule": "FREQ=DAILY",
+            "scheduling_mode": "floating",
+        },
+    )
+    assert response.status_code == 201
+    task_id = response.json()["id"]
+    
+    # Complete the task with scheduled_for representing April 6 at local midnight
+    # In CDT (UTC-5), April 6 00:00 = April 6 05:00 UTC
+    completion_time = datetime(2026, 4, 6, 5, 0, 0, tzinfo=timezone.utc)
+    complete_response = await client.post(
+        f"/tasks/{task_id}/complete",
+        json={"scheduled_for": completion_time.isoformat()},
+    )
+    assert complete_response.status_code == 200
+    assert complete_response.json()["completed_for_today"] is True
+    
+    # Query with client_today="2026-04-06" - should find the completion
+    list_response = await client.get("/tasks?client_today=2026-04-06")
+    assert list_response.status_code == 200
+    tasks = list_response.json()["tasks"]
+    task = next((t for t in tasks if t["id"] == task_id), None)
+    assert task is not None, "Task should be in the list"
+    assert task["completed_for_today"] is True, (
+        "Completion at 2026-04-06T05:00:00Z should match client_today=2026-04-06"
+    )
+    assert task["completions_today"] == 1
+    
+    # Query with client_today="2026-04-07" - should NOT count as completed for that day
+    list_response = await client.get("/tasks?client_today=2026-04-07")
+    assert list_response.status_code == 200
+    tasks = list_response.json()["tasks"]
+    task = next((t for t in tasks if t["id"] == task_id), None)
+    assert task is not None, "Task should be in the list"
+    assert task["completed_for_today"] is False, (
+        "Completion at 2026-04-06T05:00:00Z should NOT match client_today=2026-04-07"
+    )
+    assert task["completions_today"] == 0
+
+
+@pytest.mark.asyncio
+async def test_today_view_flow_with_timezone_offset(client: AsyncClient):
+    """Test the exact flow the frontend uses for Today view with timezone offset.
+    
+    Scenario: User is at 8:30 PM CDT on April 6, which is 1:30 AM UTC on April 7.
+    They complete a recurring task. The task should show as completed when
+    refetching with include_completed=true and client_today="2026-04-06".
+    """
+    # Create a recurring task (no scheduled time - anytime task)
+    response = await client.post(
+        "/tasks",
+        json={
+            "title": "Evening routine",
+            "is_recurring": True,
+            "recurrence_rule": "FREQ=DAILY",
+            "scheduling_mode": "floating",
+            # No scheduled_at - this is an anytime task
+        },
+    )
+    assert response.status_code == 201
+    task_id = response.json()["id"]
+    
+    # Simulate the frontend sending a completion for April 6 local time
+    # Frontend does: new Date(2026, 3, 6).toISOString() = April 6 00:00 local
+    # In CDT (UTC-5), this becomes 2026-04-06T05:00:00Z
+    completion_time = datetime(2026, 4, 6, 5, 0, 0, tzinfo=timezone.utc)
+    complete_response = await client.post(
+        f"/tasks/{task_id}/complete",
+        json={"scheduled_for": completion_time.isoformat()},
+    )
+    assert complete_response.status_code == 200
+    assert complete_response.json()["completed_for_today"] is True
+    
+    # Simulate the frontend refetching all tasks for Today view
+    # Frontend sends: status=undefined, include_completed=true, client_today="2026-04-06"
+    list_response = await client.get(
+        "/tasks?include_completed=true&client_today=2026-04-06"
+    )
+    assert list_response.status_code == 200
+    tasks = list_response.json()["tasks"]
+    task = next((t for t in tasks if t["id"] == task_id), None)
+    
+    assert task is not None, "Task should be in the list"
+    assert task["completed_for_today"] is True, (
+        "Task should show completed_for_today=True after refetch"
+    )
+    assert task["completions_today"] == 1
+    assert task["status"] == "pending", "Recurring task stays pending"
+    
+    # Now test REOPEN - user wants to undo the completion
+    # Frontend sends the same scheduled_for that was used for completion
+    reopen_response = await client.post(
+        f"/tasks/{task_id}/reopen",
+        json={"scheduled_for": completion_time.isoformat()},
+    )
+    assert reopen_response.status_code == 200
+    
+    # After reopen, refetch and verify completed_for_today is False
+    list_response = await client.get(
+        "/tasks?include_completed=true&client_today=2026-04-06"
+    )
+    tasks = list_response.json()["tasks"]
+    task = next((t for t in tasks if t["id"] == task_id), None)
+    
+    assert task is not None
+    assert task["completed_for_today"] is False, (
+        "After reopen, completed_for_today should be False"
+    )
+    assert task["completions_today"] == 0
+    assert task["status"] == "pending", "Recurring task stays pending"
