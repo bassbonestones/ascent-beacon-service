@@ -225,6 +225,22 @@ async def test_list_tasks_filter_by_status(client: AsyncClient):
     assert data["tasks"][0]["title"] == "Task 2"
 
 
+@pytest.mark.asyncio
+async def test_list_tasks_days_ahead_param(client: AsyncClient):
+    """Test that days_ahead parameter is accepted and validated."""
+    # days_ahead param should work (default is 14)
+    response = await client.get("/tasks?days_ahead=28")
+    assert response.status_code == 200
+
+    # Minimum is 1
+    response = await client.get("/tasks?days_ahead=0")
+    assert response.status_code == 422  # Validation error
+
+    # Maximum is 365
+    response = await client.get("/tasks?days_ahead=400")
+    assert response.status_code == 422  # Validation error
+
+
 # ============================================================================
 # Get Task Tests
 # ============================================================================

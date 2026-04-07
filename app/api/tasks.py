@@ -105,6 +105,9 @@ async def list_tasks(
     client_today: str | None = Query(
         default=None, description="Client's local date as YYYY-MM-DD for 'today' calculations"
     ),
+    days_ahead: int = Query(
+        default=14, ge=1, le=365, description="How many days ahead to load completion data for recurring tasks"
+    ),
 ) -> TaskListResponse:
     """Get all tasks for the current user, with optional filters."""
     # Determine "today" - prefer client's local date if provided
@@ -129,8 +132,8 @@ async def list_tasks(
     now = datetime.now(timezone.utc)
     start_of_day = datetime.combine(today_date, datetime.min.time(), tzinfo=timezone.utc)
     end_of_day = start_of_day + timedelta(days=1) - timedelta(microseconds=1)
-    # Extended range for Upcoming view (14 days)
-    end_of_range = start_of_day + timedelta(days=15)
+    # Extended range for Upcoming view (controlled by days_ahead param)
+    end_of_range = start_of_day + timedelta(days=days_ahead + 1)
     
     # Get IDs of recurring tasks completed or skipped today
     completed_today_subquery = (
@@ -223,13 +226,13 @@ async def list_tasks(
     skip_reasons_by_date_map: dict[str, dict[str, str | None]] = {}  # task_id -> date -> reason
     
     if recurring_task_ids:
-        # Query for completions in the next 14 days (including today)
+        # Query for completions in the specified days_ahead range (including today)
         # (end_of_range is defined at the top of the function)
         # Include status, skip_reason, and local_date so we can separate completions from skips
         
         # Calculate date strings for local_date matching
         # (local_date is a YYYY-MM-DD string, not a datetime)
-        end_date_str = (today_date + timedelta(days=14)).strftime("%Y-%m-%d")
+        end_date_str = (today_date + timedelta(days=days_ahead)).strftime("%Y-%m-%d")
         
         # Query using OR: match either local_date in range OR scheduled_for in range
         # This handles timezone edge cases where scheduled_for (UTC) might be a day
