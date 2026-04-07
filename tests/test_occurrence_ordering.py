@@ -576,3 +576,50 @@ async def test_get_date_range_order_with_data(client: AsyncClient, recurring_tas
     # Should NOT have overrides for other dates
     assert "2026-04-07" not in data["daily_overrides"]
     assert "2026-04-08" not in data["daily_overrides"]
+
+
+# ============================================================================
+# Clear Day Order From Tests
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_clear_day_order_from(client: AsyncClient, test_tasks: list[str]):
+    """Test clearing daily overrides from a date onward (inclusive)."""
+    # Create daily overrides for multiple dates
+    for date in ["2026-04-07", "2026-04-08", "2026-04-09", "2026-04-10"]:
+        await client.post(
+            "/tasks/reorder-occurrences",
+            json={
+                "date": date,
+                "occurrences": [
+                    {"task_id": test_tasks[0], "occurrence_index": 0},
+                ],
+                "save_mode": "today",
+            },
+        )
+    
+    # Verify all 4 dates have overrides
+    for date in ["2026-04-07", "2026-04-08", "2026-04-09", "2026-04-10"]:
+        response = await client.get("/tasks/occurrence-order", params={"date": date})
+        assert response.json()["has_overrides"] is True
+    
+    # Clear from 2026-04-08 onward
+    response = await client.delete("/tasks/occurrence-order/from/2026-04-08")
+    assert response.status_code == 204
+    
+    # Verify 2026-04-07 still has overrides (before the cutoff)
+    response = await client.get("/tasks/occurrence-order", params={"date": "2026-04-07"})
+    assert response.json()["has_overrides"] is True
+    
+    # Verify 2026-04-08, 2026-04-09, 2026-04-10 no longer have overrides
+    for date in ["2026-04-08", "2026-04-09", "2026-04-10"]:
+        response = await client.get("/tasks/occurrence-order", params={"date": date})
+        assert response.json()["has_overrides"] is False
+
+
+@pytest.mark.asyncio
+async def test_clear_day_order_from_nonexistent(client: AsyncClient):
+    """Test clearing from a date when no overrides exist (should still succeed)."""
+    response = await client.delete("/tasks/occurrence-order/from/2026-04-07")
+    assert response.status_code == 204

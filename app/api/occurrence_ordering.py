@@ -118,16 +118,11 @@ async def _save_permanent_preferences(
     When saving permanent preferences for recurring tasks, any existing daily overrides
     for those tasks on this date are removed so the permanent preferences take effect.
     """
-    import logging
-    logger = logging.getLogger(__name__)
-    
     # First, determine which tasks are recurring
     task_ids = [occ.task_id for occ in request.occurrences]
     stmt = select(Task.id, Task.is_recurring).where(Task.id.in_(task_ids))
     result = await db.execute(stmt)
     task_recurring_map = {row.id: row.is_recurring for row in result.all()}
-    
-    logger.info(f"[HYBRID SAVE] task_recurring_map: {task_recurring_map}")
     
     # Separate recurring and single tasks
     recurring_occs = []
@@ -137,9 +132,6 @@ async def _save_permanent_preferences(
             recurring_occs.append(occ)
         else:
             single_occs.append(occ)
-    
-    logger.info(f"[HYBRID SAVE] recurring_occs: {[(o.task_id, o.occurrence_index) for o in recurring_occs]}")
-    logger.info(f"[HYBRID SAVE] single_occs: {[(o.task_id, o.occurrence_index) for o in single_occs]}")
     
     now = utc_now()
     
@@ -158,7 +150,6 @@ async def _save_permanent_preferences(
                 )
             )
         )
-        logger.info(f"[HYBRID SAVE] Deleted daily overrides for recurring tasks on {request.date}")
         
         # Get existing preferences for recurring task/occurrence combos
         stmt = select(OccurrencePreference).where(
@@ -324,6 +315,30 @@ async def clear_day_order(
             and_(
                 DailySortOverride.user_id == user.id,
                 DailySortOverride.override_date == date,
+            )
+        )
+    )
+    await db.commit()
+
+
+@router.delete(
+    "/occurrence-order/from/{from_date}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Clear daily overrides from a date onward",
+    description="Remove all daily sort overrides from the specified date onward (inclusive), reverting those dates to permanent preferences.",
+)
+async def clear_day_order_from(
+    from_date: str,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> None:
+    """Clear daily overrides from a specific date onward (inclusive)."""
+    
+    await db.execute(
+        delete(DailySortOverride).where(
+            and_(
+                DailySortOverride.user_id == user.id,
+                DailySortOverride.override_date >= from_date,
             )
         )
     )
