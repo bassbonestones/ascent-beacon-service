@@ -97,8 +97,10 @@ async def test_get_task_stats_recurring(client: AsyncClient):
         )
 
     # Get stats for the last week
+    # Use start-of-day for start to ensure 09:00 completions are included
     now = datetime.now(timezone.utc)
-    start = quote((now - timedelta(days=7)).isoformat())
+    start_day = (now - timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0)
+    start = quote(start_day.isoformat())
     end = quote(now.isoformat())
 
     response = await client.get(
@@ -151,8 +153,10 @@ async def test_get_task_stats_with_skips(client: AsyncClient):
         json={"scheduled_for": day2, "reason": "sick"},
     )
 
+    # Use start-of-day for start to ensure 09:00 completions are included
     now = datetime.now(timezone.utc)
-    start = quote((now - timedelta(days=3)).isoformat())
+    start_day = (now - timedelta(days=3)).replace(hour=0, minute=0, second=0, microsecond=0)
+    start = quote(start_day.isoformat())
     end = quote(now.isoformat())
 
     response = await client.get(
@@ -249,8 +253,10 @@ async def test_get_completion_history_with_data(client: AsyncClient):
         json={"scheduled_for": scheduled.isoformat()},
     )
 
+    # Use start-of-day for start to ensure 09:00 completions are included
     now = datetime.now(timezone.utc)
-    start = quote((now - timedelta(days=7)).isoformat())
+    start_day = (now - timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0)
+    start = quote(start_day.isoformat())
     end = quote(now.isoformat())
 
     response = await client.get(
