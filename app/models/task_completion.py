@@ -49,6 +49,12 @@ class TaskCompletion(Base, UUIDMixin):
         DateTime(timezone=True), nullable=True
     )
 
+    # Client's local date for this occurrence (YYYY-MM-DD)
+    # Used as the key for completions_by_date and skips_by_date
+    local_date: Mapped[str | None] = mapped_column(
+        String(10), nullable=True
+    )
+
     # Created timestamp (no updated_at since completions are immutable)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

@@ -123,8 +123,14 @@ class TaskResponse(BaseModel):
     # Phase 4b: For recurring tasks, the actual times skipped today
     skipped_times_today: list[str] = []
     
+    # Phase 4b: For recurring tasks, the skip reason for today (most recent)
+    skip_reason_today: str | None = None
+    
     # Phase 4b: For recurring tasks, skips indexed by date (YYYY-MM-DD)
     skips_by_date: dict[str, list[str]] = {}
+    
+    # Phase 4b: For recurring tasks, skip reasons indexed by date (YYYY-MM-DD)
+    skip_reasons_by_date: dict[str, str | None] = {}
 
     # Linked goal info (populated via eager loading)
     goal: GoalInfo | None = None
@@ -211,6 +217,10 @@ class CompleteTaskRequest(BaseModel):
         default=None,
         description="For recurring tasks: which occurrence was completed"
     )
+    local_date: str | None = Field(
+        default=None,
+        description="Client's local date (YYYY-MM-DD) for this occurrence"
+    )
 
 
 class SkipTaskRequest(BaseModel):
@@ -221,6 +231,10 @@ class SkipTaskRequest(BaseModel):
         default=None,
         description="For recurring tasks: which occurrence was skipped"
     )
+    local_date: str | None = Field(
+        default=None,
+        description="Client's local date (YYYY-MM-DD) for this occurrence"
+    )
 
 
 class ReopenTaskRequest(BaseModel):
@@ -229,6 +243,10 @@ class ReopenTaskRequest(BaseModel):
     scheduled_for: datetime | None = Field(
         default=None,
         description="For recurring tasks: which occurrence to undo (delete completion)"
+    )
+    local_date: str | None = Field(
+        default=None,
+        description="Client's local date (YYYY-MM-DD) for this occurrence"
     )
 
 

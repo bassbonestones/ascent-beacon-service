@@ -48,6 +48,8 @@ def task_to_response(
     skips_today: int = 0,
     skipped_times_today: list[str] | None = None,
     skips_by_date: dict[str, list[str]] | None = None,
+    skip_reason_today: str | None = None,
+    skip_reasons_by_date: dict[str, str | None] | None = None,
 ) -> TaskResponse:
     """Convert Task model to response schema.
     
@@ -64,6 +66,8 @@ def task_to_response(
         skips_today: For recurring tasks, how many skips today
         skipped_times_today: For recurring tasks, the actual skip timestamps
         skips_by_date: For recurring tasks, dict mapping date strings to skip timestamps
+        skip_reason_today: For recurring tasks, the skip reason for today
+        skip_reasons_by_date: For recurring tasks, skip reasons by date
     """
     goal_info = None
     if task.goal:
@@ -87,6 +91,7 @@ def task_to_response(
         recurrence_rule=task.recurrence_rule,
         notify_before_minutes=task.notify_before_minutes,
         completed_at=task.completed_at,
+        skip_reason=task.skip_reason,
         created_at=task.created_at,
         updated_at=task.updated_at,
         is_lightning=task.is_lightning,
@@ -99,6 +104,8 @@ def task_to_response(
         skips_today=skips_today if task.is_recurring else 0,
         skipped_times_today=skipped_times_today or [] if task.is_recurring else [],
         skips_by_date=skips_by_date or {} if task.is_recurring else {},
+        skip_reason_today=skip_reason_today if task.is_recurring else None,
+        skip_reasons_by_date=skip_reasons_by_date or {} if task.is_recurring else {},
     )
 
 

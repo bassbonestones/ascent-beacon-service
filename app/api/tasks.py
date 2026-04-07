@@ -218,20 +218,48 @@ async def list_tasks(
     skips_today_count: dict[str, int] = {}
     skips_today_times: dict[str, list[str]] = {}
     skips_by_date_map: dict[str, dict[str, list[str]]] = {}  # task_id -> date -> times
+    # Skip reason tracking
+    skip_reason_today_map: dict[str, str | None] = {}  # task_id -> reason
+    skip_reasons_by_date_map: dict[str, dict[str, str | None]] = {}  # task_id -> date -> reason
     
     if recurring_task_ids:
         # Query for completions in the next 14 days (including today)
         # (end_of_range is defined at the top of the function)
-        # Include status so we can separate completions from skips
+        # Include status, skip_reason, and local_date so we can separate completions from skips
         
+        # Calculate date strings for local_date matching
+        # (local_date is a YYYY-MM-DD string, not a datetime)
+        end_date_str = (today_date + timedelta(days=14)).strftime("%Y-%m-%d")
+        
+        # Query using OR: match either local_date in range OR scheduled_for in range
+        # This handles timezone edge cases where scheduled_for (UTC) might be a day
+        # behind local_date for users ahead of UTC
         completion_stmt = (
-            select(TaskCompletion.task_id, TaskCompletion.scheduled_for, TaskCompletion.status)
+            select(
+                TaskCompletion.task_id,
+                TaskCompletion.scheduled_for,
+                TaskCompletion.status,
+                TaskCompletion.skip_reason,
+                TaskCompletion.local_date,
+            )
             .where(
                 and_(
                     TaskCompletion.task_id.in_(recurring_task_ids),
                     TaskCompletion.status.in_(["completed", "skipped"]),
-                    TaskCompletion.scheduled_for >= start_of_day,
-                    TaskCompletion.scheduled_for < end_of_range,
+                    or_(
+                        # Match by local_date (new records with timezone-correct date)
+                        and_(
+                            TaskCompletion.local_date.isnot(None),
+                            TaskCompletion.local_date >= today_str,
+                            TaskCompletion.local_date <= end_date_str,
+                        ),
+                        # Match by scheduled_for (backward compat for old records without local_date)
+                        and_(
+                            TaskCompletion.local_date.is_(None),
+                            TaskCompletion.scheduled_for >= start_of_day,
+                            TaskCompletion.scheduled_for < end_of_range,
+                        ),
+                    ),
                 )
             )
         )
@@ -242,17 +270,20 @@ async def list_tasks(
             task_id = row[0]
             scheduled_for = row[1]
             record_status = row[2]  # "completed" or "skipped"
+            skip_reason = row[3]  # skip reason (null for completions)
+            local_date = row[4]  # client's local date (YYYY-MM-DD)
             
             if scheduled_for:
                 # Ensure scheduled_for is timezone-aware for comparison
                 if scheduled_for.tzinfo is None:
                     scheduled_for = scheduled_for.replace(tzinfo=timezone.utc)
                 
-                # Get date key (YYYY-MM-DD) - extract from the ISO string to preserve
-                # the date as the client intended it, not as UTC day
-                # The client sends scheduled_for as local midnight converted to UTC,
-                # so we want the DATE portion of that timestamp
-                date_key = scheduled_for.strftime("%Y-%m-%d")
+                # Use local_date as the date key if available (for timezone correctness)
+                # Fall back to UTC date from scheduled_for for backward compatibility
+                if local_date:
+                    date_key = local_date
+                else:
+                    date_key = scheduled_for.strftime("%Y-%m-%d")
                 
                 if record_status == "completed":
                     # Track completions
@@ -276,12 +307,20 @@ async def list_tasks(
                         skips_by_date_map[task_id][date_key] = []
                     skips_by_date_map[task_id][date_key].append(scheduled_for.isoformat())
                     
+                    # Track skip reasons by date
+                    if task_id not in skip_reasons_by_date_map:
+                        skip_reasons_by_date_map[task_id] = {}
+                    # Store the most recent skip reason for this date
+                    skip_reasons_by_date_map[task_id][date_key] = skip_reason
+                    
                     # Track today-specific skip counts
                     if date_key == today_str:
                         skips_today_count[task_id] = skips_today_count.get(task_id, 0) + 1
                         if task_id not in skips_today_times:
                             skips_today_times[task_id] = []
                         skips_today_times[task_id].append(scheduled_for.isoformat())
+                        # Store the most recent skip reason for today
+                        skip_reason_today_map[task_id] = skip_reason
     
     # Count stats
     pending_count = sum(1 for t in tasks if t.status == "pending")
@@ -299,6 +338,8 @@ async def list_tasks(
                 skips_today=skips_today_count.get(t.id, 0),
                 skipped_times_today=skips_today_times.get(t.id, []),
                 skips_by_date=skips_by_date_map.get(t.id, {}),
+                skip_reason_today=skip_reason_today_map.get(t.id),
+                skip_reasons_by_date=skip_reasons_by_date_map.get(t.id, {}),
             )
             for t in tasks
         ],
@@ -414,6 +455,7 @@ async def complete_task(
             status="completed",
             completed_at=utc_now(),
             scheduled_for=request.scheduled_for,
+            local_date=request.local_date,
         )
         db.add(completion)
         # Task stays pending for next occurrence
@@ -459,6 +501,7 @@ async def skip_task(
             skip_reason=request.reason,
             completed_at=utc_now(),
             scheduled_for=request.scheduled_for,
+            local_date=request.local_date,
         )
         db.add(completion)
         # Task stays pending for next occurrence
