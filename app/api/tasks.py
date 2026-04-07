@@ -58,16 +58,23 @@ async def create_task(
             detail="scheduling_mode is required for recurring tasks with scheduled times",
         )
     
+    # Determine scheduling_mode if not explicitly provided
+    scheduling_mode = request.scheduling_mode
+    if scheduling_mode is None:
+        if request.scheduled_date and not request.scheduled_at:
+            scheduling_mode = "date_only"
+    
     task = Task(
         user_id=user.id,
         goal_id=request.goal_id,
         title=request.title,
         description=request.description,
         duration_minutes=request.duration_minutes,
+        scheduled_date=request.scheduled_date,
         scheduled_at=request.scheduled_at,
         is_recurring=request.is_recurring,
         recurrence_rule=request.recurrence_rule,
-        scheduling_mode=request.scheduling_mode,
+        scheduling_mode=scheduling_mode,
         notify_before_minutes=request.notify_before_minutes,
         status="pending",
     )
@@ -269,7 +276,8 @@ async def list_tasks(
         completion_result = await db.execute(completion_stmt)
         
         # Build completion data structures
-        for row in completion_result.fetchall():
+        all_completion_rows = completion_result.fetchall()
+        for row in all_completion_rows:
             task_id = row[0]
             scheduled_for = row[1]
             record_status = row[2]  # "completed" or "skipped"
@@ -379,23 +387,40 @@ async def update_task(
         await get_goal_for_task_or_404(db, request.goal_id, user.id)
         task.goal_id = request.goal_id
     
-    if request.title is not None:
+    # Use exclude_unset to detect what was explicitly sent
+    update_data = request.model_dump(exclude_unset=True)
+    
+    if "title" in update_data:
         task.title = request.title
-    if request.description is not None:
+    if "description" in update_data:
         task.description = request.description
-    if request.duration_minutes is not None:
+    if "duration_minutes" in update_data:
         task.duration_minutes = request.duration_minutes
-    if request.scheduled_at is not None:
-        task.scheduled_at = request.scheduled_at
-    if request.notify_before_minutes is not None:
+    if "notify_before_minutes" in update_data:
         task.notify_before_minutes = request.notify_before_minutes
     
+    # Handle scheduling fields - scheduled_date and scheduled_at
+    # When one is set, the other should typically be cleared
+    if "scheduled_date" in update_data:
+        task.scheduled_date = request.scheduled_date
+    if "scheduled_at" in update_data:
+        task.scheduled_at = request.scheduled_at
+    
+    # Auto-determine scheduling_mode if scheduling fields changed
+    if "scheduled_date" in update_data or "scheduled_at" in update_data:
+        if task.scheduled_date and not task.scheduled_at:
+            task.scheduling_mode = "date_only"
+        elif task.scheduled_at and not task.scheduled_date:
+            # Keep existing mode if already set, otherwise don't set
+            if not task.scheduling_mode or task.scheduling_mode == "date_only":
+                task.scheduling_mode = None  # Let it be inferred
+    
     # Phase 4b: Recurrence fields
-    if request.is_recurring is not None:
+    if "is_recurring" in update_data:
         task.is_recurring = request.is_recurring
-    if request.recurrence_rule is not None:
+    if "recurrence_rule" in update_data:
         task.recurrence_rule = request.recurrence_rule
-    if request.scheduling_mode is not None:
+    if "scheduling_mode" in update_data and request.scheduling_mode is not None:
         task.scheduling_mode = request.scheduling_mode
     
     task.updated_at = utc_now()
@@ -613,6 +638,53 @@ async def reopen_task(
 # ============================================================================
 # Time Machine Endpoints
 # ============================================================================
+
+
+@router.get(
+    "/completions/future/count",
+    summary="Count future completions",
+)
+async def count_future_completions(
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    after_date: str | None = Query(
+        None,
+        description="Count completions after this date (YYYY-MM-DD). Defaults to today if not provided.",
+    ),
+) -> dict[str, int]:
+    """
+    Count task completions dated after the specified date.
+    
+    Used by the Time Machine feature to show the user how many completions
+    would be affected when reverting to an earlier date.
+    """
+    from datetime import date, datetime
+    from sqlalchemy import func
+    
+    # Parse the after_date or default to today
+    if after_date:
+        try:
+            cutoff_date = datetime.strptime(after_date, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid date format. Use YYYY-MM-DD.",
+            )
+    else:
+        cutoff_date = date.today()
+    
+    count_stmt = select(func.count()).select_from(TaskCompletion).where(
+        and_(
+            TaskCompletion.task_id.in_(
+                select(Task.id).where(Task.user_id == user.id)
+            ),
+            func.date(TaskCompletion.scheduled_for) > cutoff_date
+        )
+    )
+    result = await db.execute(count_stmt)
+    count = result.scalar() or 0
+    
+    return {"count": count}
 
 
 @router.delete(

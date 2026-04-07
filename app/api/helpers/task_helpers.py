@@ -85,6 +85,7 @@ def task_to_response(
         description=task.description,
         duration_minutes=task.duration_minutes,
         status=task.status,
+        scheduled_date=task.scheduled_date,
         scheduled_at=task.scheduled_at,
         scheduling_mode=task.scheduling_mode,
         is_recurring=task.is_recurring,

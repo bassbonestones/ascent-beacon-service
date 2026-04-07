@@ -55,7 +55,13 @@ class Task(Base, UUIDMixin, TimestampMixin):
     # Status: pending | completed | skipped
     status: Mapped[str] = mapped_column(String, nullable=False, default="pending")
 
-    # Scheduling (when user plans to do it)
+    # Scheduling: scheduled_date for the date, scheduled_at for the time
+    # - For date-only tasks: scheduled_date is set, scheduled_at is NULL
+    # - For timed tasks: scheduled_at is set (includes date+time), scheduled_date may be NULL
+    # - For unscheduled tasks: both are NULL (defaults to "today" in the UI)
+    scheduled_date: Mapped[str | None] = mapped_column(
+        String, nullable=True
+    )  # YYYY-MM-DD format
     scheduled_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

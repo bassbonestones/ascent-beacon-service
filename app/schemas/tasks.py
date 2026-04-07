@@ -77,11 +77,15 @@ class TaskResponse(BaseModel):
     description: str | None = None
     duration_minutes: int = 0
     status: str  # pending | completed | skipped
-    scheduled_at: datetime | None = None
+    
+    # Scheduling: scheduled_date for date-only, scheduled_at for date+time
+    scheduled_date: str | None = None  # YYYY-MM-DD format, for date-only tasks
+    scheduled_at: datetime | None = None  # For timed tasks (includes date+time)
     
     # Phase 4b: Scheduling mode for recurring tasks
     # 'floating' = "Time-of-day" (7am wherever you are)
     # 'fixed' = "Fixed time" (timezone-locked)
+    # 'date_only' = only date is set, no specific time
     scheduling_mode: str | None = None
     
     is_recurring: bool = False
@@ -170,8 +174,12 @@ class CreateTaskRequest(BaseModel):
         ge=0,
         description="Duration in minutes. 0 = lightning task (<1 min)",
     )
+    # Scheduling: Use scheduled_date for date-only, scheduled_at for date+time
+    scheduled_date: str | None = Field(
+        default=None, description="Date only (YYYY-MM-DD) - use when no specific time"
+    )
     scheduled_at: datetime | None = Field(
-        default=None, description="When user plans to do this task"
+        default=None, description="Full datetime - use when task has a specific time"
     )
     
     # Phase 4b: Recurrence fields
@@ -199,6 +207,10 @@ class UpdateTaskRequest(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=500)
     description: str | None = Field(default=None, max_length=2000)
     duration_minutes: int | None = Field(default=None, ge=0)
+    # Scheduling: Use scheduled_date for date-only, scheduled_at for date+time
+    # Send scheduled_date with scheduled_at=null to make date-only
+    # Send scheduled_at with scheduled_date=null to make timed
+    scheduled_date: str | None = None
     scheduled_at: datetime | None = None
     notify_before_minutes: int | None = None
     goal_id: str | None = Field(default=None, description="Move task to different goal")
