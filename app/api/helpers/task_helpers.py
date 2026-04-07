@@ -44,6 +44,10 @@ def task_to_response(
     completions_today: int = 0,
     completed_times_today: list[str] | None = None,
     completions_by_date: dict[str, list[str]] | None = None,
+    skipped_for_today: bool = False,
+    skips_today: int = 0,
+    skipped_times_today: list[str] | None = None,
+    skips_by_date: dict[str, list[str]] | None = None,
 ) -> TaskResponse:
     """Convert Task model to response schema.
     
@@ -56,6 +60,10 @@ def task_to_response(
                               ISO datetime strings of completions today
         completions_by_date: For recurring tasks, dict mapping date strings (YYYY-MM-DD)
                             to lists of completion timestamps for that date
+        skipped_for_today: For recurring tasks, whether it's been skipped today
+        skips_today: For recurring tasks, how many skips today
+        skipped_times_today: For recurring tasks, the actual skip timestamps
+        skips_by_date: For recurring tasks, dict mapping date strings to skip timestamps
     """
     goal_info = None
     if task.goal:
@@ -87,6 +95,10 @@ def task_to_response(
         completions_today=completions_today if task.is_recurring else 0,
         completed_times_today=completed_times_today or [] if task.is_recurring else [],
         completions_by_date=completions_by_date or {} if task.is_recurring else {},
+        skipped_for_today=skipped_for_today if task.is_recurring else False,
+        skips_today=skips_today if task.is_recurring else 0,
+        skipped_times_today=skipped_times_today or [] if task.is_recurring else [],
+        skips_by_date=skips_by_date or {} if task.is_recurring else {},
     )
 
 

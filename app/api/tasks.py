@@ -214,13 +214,18 @@ async def list_tasks(
     completions_today_count: dict[str, int] = {}
     completions_today_times: dict[str, list[str]] = {}
     completions_by_date_map: dict[str, dict[str, list[str]]] = {}  # task_id -> date -> times
+    # Separate tracking for skips
+    skips_today_count: dict[str, int] = {}
+    skips_today_times: dict[str, list[str]] = {}
+    skips_by_date_map: dict[str, dict[str, list[str]]] = {}  # task_id -> date -> times
     
     if recurring_task_ids:
         # Query for completions in the next 14 days (including today)
         # (end_of_range is defined at the top of the function)
+        # Include status so we can separate completions from skips
         
         completion_stmt = (
-            select(TaskCompletion.task_id, TaskCompletion.scheduled_for)
+            select(TaskCompletion.task_id, TaskCompletion.scheduled_for, TaskCompletion.status)
             .where(
                 and_(
                     TaskCompletion.task_id.in_(recurring_task_ids),
@@ -236,15 +241,12 @@ async def list_tasks(
         for row in completion_result.fetchall():
             task_id = row[0]
             scheduled_for = row[1]
+            record_status = row[2]  # "completed" or "skipped"
             
             if scheduled_for:
                 # Ensure scheduled_for is timezone-aware for comparison
                 if scheduled_for.tzinfo is None:
                     scheduled_for = scheduled_for.replace(tzinfo=timezone.utc)
-                
-                # Initialize task entry if needed
-                if task_id not in completions_by_date_map:
-                    completions_by_date_map[task_id] = {}
                 
                 # Get date key (YYYY-MM-DD) - extract from the ISO string to preserve
                 # the date as the client intended it, not as UTC day
@@ -252,17 +254,34 @@ async def list_tasks(
                 # so we want the DATE portion of that timestamp
                 date_key = scheduled_for.strftime("%Y-%m-%d")
                 
-                if date_key not in completions_by_date_map[task_id]:
-                    completions_by_date_map[task_id][date_key] = []
-                completions_by_date_map[task_id][date_key].append(scheduled_for.isoformat())
-                
-                # Track today-specific counts using date string comparison (not datetime range)
-                # This matches the client's "today" regardless of UTC offset
-                if date_key == today_str:
-                    completions_today_count[task_id] = completions_today_count.get(task_id, 0) + 1
-                    if task_id not in completions_today_times:
-                        completions_today_times[task_id] = []
-                    completions_today_times[task_id].append(scheduled_for.isoformat())
+                if record_status == "completed":
+                    # Track completions
+                    if task_id not in completions_by_date_map:
+                        completions_by_date_map[task_id] = {}
+                    if date_key not in completions_by_date_map[task_id]:
+                        completions_by_date_map[task_id][date_key] = []
+                    completions_by_date_map[task_id][date_key].append(scheduled_for.isoformat())
+                    
+                    # Track today-specific counts
+                    if date_key == today_str:
+                        completions_today_count[task_id] = completions_today_count.get(task_id, 0) + 1
+                        if task_id not in completions_today_times:
+                            completions_today_times[task_id] = []
+                        completions_today_times[task_id].append(scheduled_for.isoformat())
+                else:
+                    # Track skips
+                    if task_id not in skips_by_date_map:
+                        skips_by_date_map[task_id] = {}
+                    if date_key not in skips_by_date_map[task_id]:
+                        skips_by_date_map[task_id][date_key] = []
+                    skips_by_date_map[task_id][date_key].append(scheduled_for.isoformat())
+                    
+                    # Track today-specific skip counts
+                    if date_key == today_str:
+                        skips_today_count[task_id] = skips_today_count.get(task_id, 0) + 1
+                        if task_id not in skips_today_times:
+                            skips_today_times[task_id] = []
+                        skips_today_times[task_id].append(scheduled_for.isoformat())
     
     # Count stats
     pending_count = sum(1 for t in tasks if t.status == "pending")
@@ -276,6 +295,10 @@ async def list_tasks(
                 completions_today=completions_today_count.get(t.id, 0),
                 completed_times_today=completions_today_times.get(t.id, []),
                 completions_by_date=completions_by_date_map.get(t.id, {}),
+                skipped_for_today=t.id in skips_today_count,
+                skips_today=skips_today_count.get(t.id, 0),
+                skipped_times_today=skips_today_times.get(t.id, []),
+                skips_by_date=skips_by_date_map.get(t.id, {}),
             )
             for t in tasks
         ],
@@ -447,8 +470,8 @@ async def skip_task(
     
     await db.commit()
     task = await get_task_or_404(db, task.id, user.id)
-    # For recurring tasks, skip also counts as "done for today"
-    return task_to_response(task, completed_for_today=task.is_recurring)
+    # For recurring tasks, mark as skipped for today
+    return task_to_response(task, skipped_for_today=task.is_recurring)
 
 
 @router.post(

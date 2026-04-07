@@ -113,6 +113,18 @@ class TaskResponse(BaseModel):
     # Maps date string to list of ISO datetime strings for completions on that date
     # Used for Upcoming view to show future occurrences as completed
     completions_by_date: dict[str, list[str]] = {}
+    
+    # Phase 4b: For recurring tasks, indicates if skipped for today
+    skipped_for_today: bool = False
+    
+    # Phase 4b: For recurring tasks, how many skips recorded for today
+    skips_today: int = 0
+    
+    # Phase 4b: For recurring tasks, the actual times skipped today
+    skipped_times_today: list[str] = []
+    
+    # Phase 4b: For recurring tasks, skips indexed by date (YYYY-MM-DD)
+    skips_by_date: dict[str, list[str]] = {}
 
     # Linked goal info (populated via eager loading)
     goal: GoalInfo | None = None
