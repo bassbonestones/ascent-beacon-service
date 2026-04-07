@@ -93,6 +93,7 @@ def task_to_response(
         notify_before_minutes=task.notify_before_minutes,
         completed_at=task.completed_at,
         skip_reason=task.skip_reason,
+        sort_order=task.sort_order,
         created_at=task.created_at,
         updated_at=task.updated_at,
         is_lightning=task.is_lightning,
@@ -168,3 +169,121 @@ async def update_goal_progress(db: AsyncSession, goal_id: str | None) -> None:
         # Auto-transition to in_progress when first task is completed
         if goal.status == "not_started" and any(t.status == "completed" for t in tasks):
             goal.status = "in_progress"
+
+
+# ============================================================================
+# Anytime Tasks Helpers (Phase 4e)
+# ============================================================================
+
+
+async def get_max_sort_order(db: AsyncSession, user_id: str) -> int:
+    """Get the maximum sort_order for a user's anytime tasks.
+    
+    Returns 0 if no anytime tasks exist.
+    """
+    from sqlalchemy import func
+    
+    stmt = select(func.max(Task.sort_order)).where(
+        Task.user_id == user_id,
+        Task.scheduling_mode == "anytime",
+    )
+    result = await db.execute(stmt)
+    max_order = result.scalar()
+    return max_order if max_order is not None else 0
+
+
+async def assign_sort_order_for_anytime(db: AsyncSession, task: Task) -> None:
+    """Assign sort_order to a new anytime task (at the bottom of the list)."""
+    if task.scheduling_mode != "anytime":
+        return
+    
+    max_order = await get_max_sort_order(db, task.user_id)
+    task.sort_order = max_order + 1
+
+
+async def clear_sort_order_for_completed(db: AsyncSession, task: Task) -> None:
+    """Clear sort_order when an anytime task is completed.
+    
+    Also shifts remaining tasks down to fill the gap.
+    """
+    if task.scheduling_mode != "anytime" or task.sort_order is None:
+        return
+    
+    old_order = task.sort_order
+    task.sort_order = None
+    
+    # Shift other tasks down to fill the gap
+    from sqlalchemy import update
+    
+    stmt = (
+        update(Task)
+        .where(
+            Task.user_id == task.user_id,
+            Task.scheduling_mode == "anytime",
+            Task.sort_order > old_order,
+        )
+        .values(sort_order=Task.sort_order - 1)
+    )
+    await db.execute(stmt)
+
+
+async def reorder_anytime_task(
+    db: AsyncSession, task: Task, new_position: int
+) -> None:
+    """Reorder an anytime task to a new position.
+    
+    new_position is 1-indexed (1 = top of list).
+    """
+    if task.scheduling_mode != "anytime":
+        raise HTTPException(
+            status_code=400,
+            detail="Only anytime tasks can be reordered",
+        )
+    
+    old_order = task.sort_order
+    if old_order is None:
+        # Task was completed, doesn't have a position
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot reorder a completed anytime task",
+        )
+    
+    # Get current max to validate new_position
+    max_order = await get_max_sort_order(db, task.user_id)
+    
+    # Clamp new_position to valid range
+    new_order = max(1, min(new_position, max_order))
+    
+    if new_order == old_order:
+        return  # No change needed
+    
+    from sqlalchemy import update
+    
+    if new_order < old_order:
+        # Moving up: shift tasks in [new_order, old_order-1] down
+        stmt = (
+            update(Task)
+            .where(
+                Task.user_id == task.user_id,
+                Task.scheduling_mode == "anytime",
+                Task.sort_order >= new_order,
+                Task.sort_order < old_order,
+            )
+            .values(sort_order=Task.sort_order + 1)
+        )
+        await db.execute(stmt)
+    else:
+        # Moving down: shift tasks in [old_order+1, new_order] up
+        stmt = (
+            update(Task)
+            .where(
+                Task.user_id == task.user_id,
+                Task.scheduling_mode == "anytime",
+                Task.sort_order > old_order,
+                Task.sort_order <= new_order,
+            )
+            .values(sort_order=Task.sort_order - 1)
+        )
+        await db.execute(stmt)
+    
+    task.sort_order = new_order

@@ -14,7 +14,8 @@ from pydantic import BaseModel, ConfigDict, Field
 # 'floating' = time-of-day (adjusts with timezone)
 # 'fixed' = fixed time (timezone-locked)
 # 'date_only' = only date is set, no specific time
-SchedulingMode = Literal["floating", "fixed", "date_only"]
+# 'anytime' = no schedule, shown in backlog tab with manual ordering (Phase 4e)
+SchedulingMode = Literal["floating", "fixed", "date_only", "anytime"]
 TaskStatus = Literal["pending", "completed", "skipped"]
 CompletionStatus = Literal["completed", "skipped"]
 
@@ -86,6 +87,7 @@ class TaskResponse(BaseModel):
     # 'floating' = "Time-of-day" (7am wherever you are)
     # 'fixed' = "Fixed time" (timezone-locked)
     # 'date_only' = only date is set, no specific time
+    # 'anytime' = no schedule, backlog task (Phase 4e)
     scheduling_mode: str | None = None
     
     is_recurring: bool = False
@@ -95,6 +97,9 @@ class TaskResponse(BaseModel):
     
     # Phase 4b: Skip reason (optional)
     skip_reason: str | None = None
+    
+    # Phase 4e: Sort order for anytime tasks (lower = higher in list)
+    sort_order: int | None = None
     
     created_at: datetime
     updated_at: datetime
@@ -193,7 +198,7 @@ class CreateTaskRequest(BaseModel):
     )
     scheduling_mode: SchedulingMode | None = Field(
         default=None,
-        description="'floating' (time-of-day) or 'fixed' (timezone-locked). Required for recurring tasks with times."
+        description="'floating' (time-of-day), 'fixed' (timezone-locked), or 'anytime' (backlog). Required for recurring tasks with times."
     )
     
     notify_before_minutes: int | None = Field(
@@ -262,6 +267,16 @@ class ReopenTaskRequest(BaseModel):
     )
 
 
+class ReorderTaskRequest(BaseModel):
+    """Request to reorder an anytime task (Phase 4e)."""
+
+    new_position: int = Field(
+        ...,
+        ge=1,
+        description="New position in the list (1 = top). Tasks below this position shift down."
+    )
+
+
 # ============================================================================
 # Today/Range View Schemas (Phase 4b)
 # ============================================================================
@@ -274,6 +289,24 @@ class TodayTasksResponse(BaseModel):
     pending_count: int = 0
     completed_today_count: int = 0
     overdue_count: int = 0
+
+
+# ============================================================================
+# Anytime Tasks Schemas (Phase 4e)
+# ============================================================================
+
+
+class AnytimeTasksResponse(BaseModel):
+    """Response for anytime tasks view (backlog)."""
+
+    tasks: list[TaskResponse]
+    total: int = 0
+
+
+class ReorderTaskResponse(BaseModel):
+    """Response after reordering a task."""
+
+    task: TaskResponse
 
 
 class TaskRangeRequest(BaseModel):

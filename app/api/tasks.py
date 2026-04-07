@@ -20,16 +20,23 @@ from app.schemas.tasks import (
     CompleteTaskRequest,
     CreateTaskRequest,
     ReopenTaskRequest,
+    ReorderTaskRequest,
     SkipTaskRequest,
     TaskListResponse,
     TaskResponse,
     UpdateTaskRequest,
+    AnytimeTasksResponse,
+    ReorderTaskResponse,
 )
 from app.api.helpers.task_helpers import (
     get_task_or_404,
     get_goal_for_task_or_404,
     task_to_response,
     update_goal_progress,
+    assign_sort_order_for_anytime,
+    clear_sort_order_for_completed,
+    reorder_anytime_task,
+    get_max_sort_order,
 )
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
@@ -58,6 +65,13 @@ async def create_task(
             detail="scheduling_mode is required for recurring tasks with scheduled times",
         )
     
+    # Phase 4e: Anytime tasks cannot be recurring (they need schedules for occurrences)
+    if request.scheduling_mode == "anytime" and request.is_recurring:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Anytime tasks cannot be recurring",
+        )
+    
     # Determine scheduling_mode if not explicitly provided
     scheduling_mode = request.scheduling_mode
     if scheduling_mode is None:
@@ -80,6 +94,9 @@ async def create_task(
     )
     db.add(task)
     await db.flush()
+    
+    # Phase 4e: Assign sort_order for anytime tasks (at the bottom of the list)
+    await assign_sort_order_for_anytime(db, task)
     
     # Update goal progress (if linked to a goal)
     if request.goal_id:
@@ -391,11 +408,11 @@ async def update_task(
     update_data = request.model_dump(exclude_unset=True)
     
     if "title" in update_data:
-        task.title = request.title
+        task.title = request.title  # type: ignore[assignment]
     if "description" in update_data:
         task.description = request.description
     if "duration_minutes" in update_data:
-        task.duration_minutes = request.duration_minutes
+        task.duration_minutes = request.duration_minutes  # type: ignore[assignment]
     if "notify_before_minutes" in update_data:
         task.notify_before_minutes = request.notify_before_minutes
     
@@ -417,7 +434,7 @@ async def update_task(
     
     # Phase 4b: Recurrence fields
     if "is_recurring" in update_data:
-        task.is_recurring = request.is_recurring
+        task.is_recurring = request.is_recurring  # type: ignore[assignment]
     if "recurrence_rule" in update_data:
         task.recurrence_rule = request.recurrence_rule
     if "scheduling_mode" in update_data and request.scheduling_mode is not None:
@@ -473,6 +490,7 @@ async def complete_task(
     
     For recurring tasks: records a completion but keeps task pending.
     For one-time tasks: sets status to 'completed'.
+    For anytime tasks: also clears sort_order and shifts others down.
     """
     task = await get_task_or_404(db, task_id, user.id)
     
@@ -492,6 +510,9 @@ async def complete_task(
         task.status = "completed"
         task.completed_at = utc_now()
         task.updated_at = utc_now()
+        
+        # Phase 4e: Clear sort_order for completed anytime tasks
+        await clear_sort_order_for_completed(db, task)
     
     # Update goal progress
     await update_goal_progress(db, task.goal_id)
@@ -518,6 +539,7 @@ async def skip_task(
     
     For recurring tasks: records a skip but keeps task pending.
     For one-time tasks: sets status to 'skipped'.
+    For anytime tasks: also clears sort_order and shifts others down.
     """
     task = await get_task_or_404(db, task_id, user.id)
     
@@ -538,6 +560,9 @@ async def skip_task(
         task.status = "skipped"
         task.skip_reason = request.reason
         task.updated_at = utc_now()
+        
+        # Phase 4e: Clear sort_order for skipped anytime tasks
+        await clear_sort_order_for_completed(db, task)
     
     await db.commit()
     task = await get_task_or_404(db, task.id, user.id)
@@ -626,6 +651,9 @@ async def reopen_task(
     task.completed_at = None
     task.skip_reason = None
     task.updated_at = utc_now()
+    
+    # Phase 4e: Re-assign sort_order for reopened anytime tasks (at the bottom)
+    await assign_sort_order_for_anytime(db, task)
     
     # Update goal progress
     await update_goal_progress(db, task.goal_id)
@@ -749,3 +777,88 @@ async def delete_future_completions(
         await db.commit()
     
     return {"deleted_count": deleted_count}
+
+
+# ============================================================================
+# Anytime Tasks Endpoints (Phase 4e)
+# ============================================================================
+
+
+@router.get(
+    "/view/anytime",
+    response_model=AnytimeTasksResponse,
+    summary="List anytime tasks",
+)
+async def list_anytime_tasks(
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    include_completed: bool = Query(
+        default=False,
+        description="Include completed anytime tasks",
+    ),
+) -> AnytimeTasksResponse:
+    """
+    Get all anytime tasks (backlog) for the current user.
+    
+    Anytime tasks are:
+    - Not scheduled to a specific date/time
+    - Never become overdue
+    - User-ordered via sort_order field
+    
+    Returns pending anytime tasks sorted by sort_order (ascending).
+    """
+    stmt = (
+        select(Task)
+        .options(selectinload(Task.goal))
+        .where(
+            Task.user_id == user.id,
+            Task.scheduling_mode == "anytime",
+        )
+    )
+    
+    if not include_completed:
+        stmt = stmt.where(Task.status == "pending")
+    
+    # Sort by sort_order (pending tasks), then by updated_at for completed
+    stmt = stmt.order_by(
+        Task.sort_order.asc().nullslast(),
+        Task.updated_at.desc(),
+    )
+    
+    result = await db.execute(stmt)
+    tasks = list(result.scalars().all())
+    
+    return AnytimeTasksResponse(
+        tasks=[task_to_response(t) for t in tasks],
+        total=len(tasks),
+    )
+
+
+@router.patch(
+    "/{task_id}/reorder",
+    response_model=ReorderTaskResponse,
+    summary="Reorder anytime task",
+)
+async def reorder_task(
+    task_id: str,
+    request: ReorderTaskRequest,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> ReorderTaskResponse:
+    """
+    Reorder an anytime task to a new position.
+    
+    new_position is 1-indexed (1 = top of list).
+    Other tasks shift to accommodate the move.
+    
+    Only works for anytime tasks that are pending (have a sort_order).
+    """
+    task = await get_task_or_404(db, task_id, user.id)
+    
+    await reorder_anytime_task(db, task, request.new_position)
+    
+    task.updated_at = utc_now()
+    await db.commit()
+    
+    task = await get_task_or_404(db, task.id, user.id)
+    return ReorderTaskResponse(task=task_to_response(task))

@@ -23,10 +23,13 @@ class Task(Base, UUIDMixin, TimestampMixin):
     - One-time tasks with optional scheduling
     - Lightning tasks (duration=0, <1 minute)
     - Recurring tasks with RRULE (Phase 4b)
+    - Anytime tasks (no schedule, user-ordered backlog) (Phase 4e)
     
-    Scheduling modes for recurring tasks with times:
+    Scheduling modes:
     - 'floating' = "Time-of-day" (7am wherever you are, adjusts with timezone)
     - 'fixed' = "Fixed time" (timezone-locked, e.g., 2pm EST always)
+    - 'date_only' = Date without specific time
+    - 'anytime' = No schedule, shown in backlog tab with manual ordering
     
     Task completion drives goal progress calculation.
     """
@@ -87,6 +90,10 @@ class Task(Base, UUIDMixin, TimestampMixin):
     # Phase 4b: Optional reason when task is skipped
     skip_reason: Mapped[str | None] = mapped_column(String, nullable=True)
 
+    # Phase 4e: Sort order for anytime tasks (manual ordering)
+    # NULL for non-anytime tasks, integer for anytime (lower = higher in list)
+    sort_order: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     # Relationships
     user: Mapped["User"] = relationship("User", back_populates="tasks")
     goal: Mapped["Goal"] = relationship("Goal", back_populates="tasks")
@@ -130,6 +137,11 @@ class Task(Base, UUIDMixin, TimestampMixin):
     def is_fixed_time(self) -> bool:
         """Check if task uses fixed/timezone-locked scheduling."""
         return self.scheduling_mode == "fixed"
+
+    @property
+    def is_anytime(self) -> bool:
+        """Check if task is an anytime task (no schedule, backlog)."""
+        return self.scheduling_mode == "anytime"
 
     def __repr__(self) -> str:
         status_icon = "✓" if self.is_completed else "○"

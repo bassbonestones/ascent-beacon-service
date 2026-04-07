@@ -837,3 +837,354 @@ async def test_today_view_flow_with_timezone_offset(client: AsyncClient):
     )
     assert task["completions_today"] == 0
     assert task["status"] == "pending", "Recurring task stays pending"
+
+
+# ============================================================================
+# Anytime Tasks Tests (Phase 4e)
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_create_anytime_task(client: AsyncClient, test_user: User):
+    """Test creating an anytime task assigns sort_order."""
+    goal_response = await client.post("/goals", json={"title": "Test Goal"})
+    goal_id = goal_response.json()["id"]
+
+    response = await client.post(
+        "/tasks",
+        json={
+            "goal_id": goal_id,
+            "title": "My anytime task",
+            "scheduling_mode": "anytime",
+        },
+    )
+
+    assert response.status_code == 201
+    data = response.json()
+
+    assert data["scheduling_mode"] == "anytime"
+    assert data["sort_order"] == 1, "First anytime task should have sort_order=1"
+    assert data["is_recurring"] is False
+
+
+@pytest.mark.asyncio
+async def test_create_multiple_anytime_tasks_assigns_sequential_sort_order(
+    client: AsyncClient,
+):
+    """Test creating multiple anytime tasks assigns sequential sort_order."""
+    goal_response = await client.post("/goals", json={"title": "Test Goal"})
+    goal_id = goal_response.json()["id"]
+
+    # Create 3 anytime tasks
+    first = await client.post(
+        "/tasks",
+        json={"goal_id": goal_id, "title": "First", "scheduling_mode": "anytime"},
+    )
+    second = await client.post(
+        "/tasks",
+        json={"goal_id": goal_id, "title": "Second", "scheduling_mode": "anytime"},
+    )
+    third = await client.post(
+        "/tasks",
+        json={"goal_id": goal_id, "title": "Third", "scheduling_mode": "anytime"},
+    )
+
+    assert first.json()["sort_order"] == 1
+    assert second.json()["sort_order"] == 2
+    assert third.json()["sort_order"] == 3
+
+
+@pytest.mark.asyncio
+async def test_anytime_task_cannot_be_recurring(client: AsyncClient):
+    """Test that anytime tasks cannot be recurring."""
+    goal_response = await client.post("/goals", json={"title": "Test Goal"})
+    goal_id = goal_response.json()["id"]
+
+    response = await client.post(
+        "/tasks",
+        json={
+            "goal_id": goal_id,
+            "title": "Recurring anytime",
+            "scheduling_mode": "anytime",
+            "is_recurring": True,
+            "recurrence_rule": "FREQ=DAILY",
+        },
+    )
+
+    assert response.status_code == 400
+    assert "cannot be recurring" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_complete_anytime_task_clears_sort_order(client: AsyncClient):
+    """Test completing an anytime task clears its sort_order."""
+    goal_response = await client.post("/goals", json={"title": "Test Goal"})
+    goal_id = goal_response.json()["id"]
+
+    # Create 3 anytime tasks
+    first = await client.post(
+        "/tasks",
+        json={"goal_id": goal_id, "title": "First", "scheduling_mode": "anytime"},
+    )
+    second = await client.post(
+        "/tasks",
+        json={"goal_id": goal_id, "title": "Second", "scheduling_mode": "anytime"},
+    )
+    third = await client.post(
+        "/tasks",
+        json={"goal_id": goal_id, "title": "Third", "scheduling_mode": "anytime"},
+    )
+
+    first_id = first.json()["id"]
+    second_id = second.json()["id"]
+    third_id = third.json()["id"]
+
+    # Complete the second (middle) one
+    await client.post(f"/tasks/{second_id}/complete", json={})
+
+    # Get all tasks and verify sort_order updates
+    response = await client.get("/tasks/view/anytime?include_completed=true")
+    tasks = response.json()["tasks"]
+
+    first_task = next(t for t in tasks if t["id"] == first_id)
+    second_task = next(t for t in tasks if t["id"] == second_id)
+    third_task = next(t for t in tasks if t["id"] == third_id)
+
+    assert first_task["sort_order"] == 1
+    assert second_task["sort_order"] is None, "Completed task should have no sort_order"
+    assert third_task["sort_order"] == 2, "Third task shifts to fill gap"
+
+
+@pytest.mark.asyncio
+async def test_reopen_anytime_task_assigns_new_sort_order(client: AsyncClient):
+    """Test reopening a completed anytime task assigns sort_order at bottom."""
+    goal_response = await client.post("/goals", json={"title": "Test Goal"})
+    goal_id = goal_response.json()["id"]
+
+    # Create 2 anytime tasks
+    first = await client.post(
+        "/tasks",
+        json={"goal_id": goal_id, "title": "First", "scheduling_mode": "anytime"},
+    )
+    second = await client.post(
+        "/tasks",
+        json={"goal_id": goal_id, "title": "Second", "scheduling_mode": "anytime"},
+    )
+
+    first_id = first.json()["id"]
+    second_id = second.json()["id"]
+
+    # Complete the first task
+    await client.post(f"/tasks/{first_id}/complete", json={})
+
+    # Reopen the first task
+    await client.post(f"/tasks/{first_id}/reopen", json={})
+
+    # Get all tasks
+    response = await client.get("/tasks/view/anytime")
+    tasks = response.json()["tasks"]
+
+    first_task = next(t for t in tasks if t["id"] == first_id)
+    second_task = next(t for t in tasks if t["id"] == second_id)
+
+    assert second_task["sort_order"] == 1, "Second task should stay at position 1"
+    assert first_task["sort_order"] == 2, "Reopened task goes to bottom"
+
+
+@pytest.mark.asyncio
+async def test_list_anytime_tasks(client: AsyncClient):
+    """Test listing anytime tasks endpoint."""
+    goal_response = await client.post("/goals", json={"title": "Test Goal"})
+    goal_id = goal_response.json()["id"]
+
+    # Create anytime and non-anytime tasks
+    await client.post(
+        "/tasks",
+        json={"goal_id": goal_id, "title": "Anytime 1", "scheduling_mode": "anytime"},
+    )
+    await client.post(
+        "/tasks",
+        json={"goal_id": goal_id, "title": "Anytime 2", "scheduling_mode": "anytime"},
+    )
+    await client.post(
+        "/tasks",
+        json={
+            "goal_id": goal_id,
+            "title": "Scheduled task",
+            "scheduled_date": "2026-04-10",
+        },
+    )
+
+    response = await client.get("/tasks/view/anytime")
+    data = response.json()
+
+    assert data["total"] == 2
+    assert len(data["tasks"]) == 2
+    assert all(t["scheduling_mode"] == "anytime" for t in data["tasks"])
+    # Should be sorted by sort_order
+    assert data["tasks"][0]["sort_order"] == 1
+    assert data["tasks"][1]["sort_order"] == 2
+
+
+@pytest.mark.asyncio
+async def test_reorder_anytime_task_move_up(client: AsyncClient):
+    """Test moving an anytime task up in the list."""
+    goal_response = await client.post("/goals", json={"title": "Test Goal"})
+    goal_id = goal_response.json()["id"]
+
+    # Create 3 anytime tasks
+    first = await client.post(
+        "/tasks",
+        json={"goal_id": goal_id, "title": "First", "scheduling_mode": "anytime"},
+    )
+    second = await client.post(
+        "/tasks",
+        json={"goal_id": goal_id, "title": "Second", "scheduling_mode": "anytime"},
+    )
+    third = await client.post(
+        "/tasks",
+        json={"goal_id": goal_id, "title": "Third", "scheduling_mode": "anytime"},
+    )
+
+    first_id = first.json()["id"]
+    second_id = second.json()["id"]
+    third_id = third.json()["id"]
+
+    # Move third to position 1 (top)
+    response = await client.patch(
+        f"/tasks/{third_id}/reorder",
+        json={"new_position": 1},
+    )
+    assert response.status_code == 200
+    assert response.json()["task"]["sort_order"] == 1
+
+    # Verify all positions updated correctly
+    list_response = await client.get("/tasks/view/anytime")
+    tasks = {t["id"]: t for t in list_response.json()["tasks"]}
+
+    assert tasks[third_id]["sort_order"] == 1, "Third moved to top"
+    assert tasks[first_id]["sort_order"] == 2, "First shifted down"
+    assert tasks[second_id]["sort_order"] == 3, "Second shifted down"
+
+
+@pytest.mark.asyncio
+async def test_reorder_anytime_task_move_down(client: AsyncClient):
+    """Test moving an anytime task down in the list."""
+    goal_response = await client.post("/goals", json={"title": "Test Goal"})
+    goal_id = goal_response.json()["id"]
+
+    # Create 3 anytime tasks
+    first = await client.post(
+        "/tasks",
+        json={"goal_id": goal_id, "title": "First", "scheduling_mode": "anytime"},
+    )
+    second = await client.post(
+        "/tasks",
+        json={"goal_id": goal_id, "title": "Second", "scheduling_mode": "anytime"},
+    )
+    third = await client.post(
+        "/tasks",
+        json={"goal_id": goal_id, "title": "Third", "scheduling_mode": "anytime"},
+    )
+
+    first_id = first.json()["id"]
+    second_id = second.json()["id"]
+    third_id = third.json()["id"]
+
+    # Move first to position 3 (bottom)
+    response = await client.patch(
+        f"/tasks/{first_id}/reorder",
+        json={"new_position": 3},
+    )
+    assert response.status_code == 200
+    assert response.json()["task"]["sort_order"] == 3
+
+    # Verify all positions updated correctly
+    list_response = await client.get("/tasks/view/anytime")
+    tasks = {t["id"]: t for t in list_response.json()["tasks"]}
+
+    assert tasks[second_id]["sort_order"] == 1, "Second moved to top"
+    assert tasks[third_id]["sort_order"] == 2, "Third shifted up"
+    assert tasks[first_id]["sort_order"] == 3, "First moved to bottom"
+
+
+@pytest.mark.asyncio
+async def test_reorder_non_anytime_task_fails(client: AsyncClient):
+    """Test that reordering a non-anytime task fails."""
+    goal_response = await client.post("/goals", json={"title": "Test Goal"})
+    goal_id = goal_response.json()["id"]
+
+    # Create a scheduled task
+    task = await client.post(
+        "/tasks",
+        json={
+            "goal_id": goal_id,
+            "title": "Scheduled",
+            "scheduled_date": "2026-04-10",
+        },
+    )
+    task_id = task.json()["id"]
+
+    response = await client.patch(
+        f"/tasks/{task_id}/reorder",
+        json={"new_position": 1},
+    )
+    assert response.status_code == 400
+    assert "Only anytime tasks" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_reorder_completed_anytime_task_fails(client: AsyncClient):
+    """Test that reordering a completed anytime task fails."""
+    goal_response = await client.post("/goals", json={"title": "Test Goal"})
+    goal_id = goal_response.json()["id"]
+
+    task = await client.post(
+        "/tasks",
+        json={"goal_id": goal_id, "title": "Anytime", "scheduling_mode": "anytime"},
+    )
+    task_id = task.json()["id"]
+
+    # Complete the task
+    await client.post(f"/tasks/{task_id}/complete", json={})
+
+    # Try to reorder
+    response = await client.patch(
+        f"/tasks/{task_id}/reorder",
+        json={"new_position": 1},
+    )
+    assert response.status_code == 400
+    assert "completed anytime task" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_anytime_tasks_without_goal(client: AsyncClient):
+    """Test creating anytime tasks without a goal."""
+    response = await client.post(
+        "/tasks",
+        json={"title": "No goal anytime", "scheduling_mode": "anytime"},
+    )
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["goal_id"] is None
+    assert data["scheduling_mode"] == "anytime"
+    assert data["sort_order"] == 1
+
+
+@pytest.mark.asyncio
+async def test_skip_anytime_task_clears_sort_order(client: AsyncClient):
+    """Test skipping an anytime task clears its sort_order."""
+    response = await client.post(
+        "/tasks",
+        json={"title": "Skip me", "scheduling_mode": "anytime"},
+    )
+    task_id = response.json()["id"]
+
+    # Skip the task
+    await client.post(f"/tasks/{task_id}/skip", json={"reason": "Not needed"})
+
+    # Verify sort_order is cleared
+    get_response = await client.get(f"/tasks/{task_id}")
+    assert get_response.json()["sort_order"] is None
+    assert get_response.json()["status"] == "skipped"
