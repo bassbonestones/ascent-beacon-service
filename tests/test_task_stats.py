@@ -83,6 +83,7 @@ async def test_get_task_stats_recurring(client: AsyncClient):
             "is_recurring": True,
             "recurrence_rule": "FREQ=DAILY;INTERVAL=1",
             "scheduling_mode": "floating",
+            "recurrence_behavior": "habitual",
         },
     )
     assert task_response.status_code == 201
@@ -136,6 +137,7 @@ async def test_get_task_stats_with_skips(client: AsyncClient):
             "is_recurring": True,
             "recurrence_rule": "FREQ=DAILY;INTERVAL=1",
             "scheduling_mode": "floating",
+            "recurrence_behavior": "habitual",
         },
     )
     assert task_response.status_code == 201
@@ -242,6 +244,7 @@ async def test_get_completion_history_with_data(client: AsyncClient):
             "is_recurring": True,
             "recurrence_rule": "FREQ=DAILY;INTERVAL=1",
             "scheduling_mode": "floating",
+            "recurrence_behavior": "habitual",
         },
     )
     assert task_response.status_code == 201
@@ -303,6 +306,7 @@ async def test_streak_calculation(client: AsyncClient):
             "is_recurring": True,
             "recurrence_rule": "FREQ=DAILY;INTERVAL=1",
             "scheduling_mode": "floating",
+            "recurrence_behavior": "habitual",
         },
     )
     assert task_response.status_code == 201

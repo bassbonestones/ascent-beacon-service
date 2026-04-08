@@ -72,6 +72,20 @@ async def create_task(
             detail="Anytime tasks cannot be recurring",
         )
     
+    # Phase 4g: Recurring tasks must have recurrence_behavior set
+    if request.is_recurring and not request.recurrence_behavior:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="recurrence_behavior is required for recurring tasks",
+        )
+    
+    # Phase 4g: Non-recurring tasks should not have recurrence_behavior
+    if not request.is_recurring and request.recurrence_behavior:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="recurrence_behavior should only be set for recurring tasks",
+        )
+    
     # Determine scheduling_mode if not explicitly provided
     scheduling_mode = request.scheduling_mode
     if scheduling_mode is None:
@@ -89,6 +103,7 @@ async def create_task(
         is_recurring=request.is_recurring,
         recurrence_rule=request.recurrence_rule,
         scheduling_mode=scheduling_mode,
+        recurrence_behavior=request.recurrence_behavior,
         notify_before_minutes=request.notify_before_minutes,
         status="pending",
     )
@@ -439,6 +454,18 @@ async def update_task(
         task.recurrence_rule = request.recurrence_rule
     if "scheduling_mode" in update_data and request.scheduling_mode is not None:
         task.scheduling_mode = request.scheduling_mode
+    if "recurrence_behavior" in update_data:
+        task.recurrence_behavior = request.recurrence_behavior
+    
+    # Phase 4g: Validate recurrence_behavior consistency after all updates
+    if task.is_recurring and not task.recurrence_behavior:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="recurrence_behavior is required for recurring tasks",
+        )
+    if not task.is_recurring and task.recurrence_behavior:
+        # Clear recurrence_behavior if task is no longer recurring
+        task.recurrence_behavior = None
     
     task.updated_at = utc_now()
     

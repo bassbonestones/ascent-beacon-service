@@ -19,6 +19,11 @@ SchedulingMode = Literal["floating", "fixed", "date_only", "anytime"]
 TaskStatus = Literal["pending", "completed", "skipped"]
 CompletionStatus = Literal["completed", "skipped"]
 
+# Phase 4g: Recurrence behavior for recurring tasks
+# 'habitual' = auto-skip missed occurrences on app open
+# 'essential' = stays overdue until manually actioned
+RecurrenceBehavior = Literal["habitual", "essential"]
+
 
 # ============================================================================
 # Shared/Nested Schemas
@@ -97,6 +102,10 @@ class TaskResponse(BaseModel):
     
     # Phase 4b: Skip reason (optional)
     skip_reason: str | None = None
+    
+    # Phase 4g: Recurrence behavior for recurring tasks
+    # 'habitual' = auto-skip missed, 'essential' = stays overdue
+    recurrence_behavior: str | None = None
     
     # Phase 4e: Sort order for anytime tasks (lower = higher in list)
     sort_order: int | None = None
@@ -200,6 +209,10 @@ class CreateTaskRequest(BaseModel):
         default=None,
         description="'floating' (time-of-day), 'fixed' (timezone-locked), or 'anytime' (backlog). Required for recurring tasks with times."
     )
+    recurrence_behavior: RecurrenceBehavior | None = Field(
+        default=None,
+        description="'habitual' (auto-skip missed) or 'essential' (stays overdue). Required for recurring tasks."
+    )
     
     notify_before_minutes: int | None = Field(
         default=None, ge=0, description="Notify N minutes before scheduled time"
@@ -224,6 +237,7 @@ class UpdateTaskRequest(BaseModel):
     is_recurring: bool | None = None
     recurrence_rule: str | None = None
     scheduling_mode: SchedulingMode | None = None
+    recurrence_behavior: RecurrenceBehavior | None = None
 
 
 class CompleteTaskRequest(BaseModel):

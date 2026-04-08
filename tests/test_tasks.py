@@ -596,6 +596,7 @@ async def test_recurring_task_completed_for_today_flag(client: AsyncClient):
             "recurrence_rule": "FREQ=DAILY",
             "scheduled_at": scheduled_at.isoformat(),
             "scheduling_mode": "floating",
+            "recurrence_behavior": "habitual",
         },
     )
     assert response.status_code == 201
@@ -642,6 +643,7 @@ async def test_completed_filter_includes_recurring_tasks_completed_today(
             "recurrence_rule": "FREQ=DAILY",
             "scheduled_at": scheduled_at.isoformat(),
             "scheduling_mode": "floating",
+            "recurrence_behavior": "habitual",
         },
     )
     task_id = response.json()["id"]
@@ -683,6 +685,7 @@ async def test_pending_filter_includes_recurring_tasks_with_completion_info(
             "recurrence_rule": "FREQ=DAILY",
             "scheduled_at": scheduled_at.isoformat(),
             "scheduling_mode": "floating",
+            "recurrence_behavior": "habitual",
         },
     )
     task_id = response.json()["id"]
@@ -729,6 +732,7 @@ async def test_client_today_timezone_handling(client: AsyncClient):
             "is_recurring": True,
             "recurrence_rule": "FREQ=DAILY",
             "scheduling_mode": "floating",
+            "recurrence_behavior": "habitual",
         },
     )
     assert response.status_code == 201
@@ -783,6 +787,7 @@ async def test_today_view_flow_with_timezone_offset(client: AsyncClient):
             "is_recurring": True,
             "recurrence_rule": "FREQ=DAILY",
             "scheduling_mode": "floating",
+            "recurrence_behavior": "habitual",
             # No scheduled_at - this is an anytime task
         },
     )
@@ -1188,3 +1193,178 @@ async def test_skip_anytime_task_clears_sort_order(client: AsyncClient):
     get_response = await client.get(f"/tasks/{task_id}")
     assert get_response.json()["sort_order"] is None
     assert get_response.json()["status"] == "skipped"
+
+
+# ============================================================================
+# Phase 4g: Recurrence Behavior Tests (Habitual vs Essential)
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_create_recurring_task_with_habitual_behavior(client: AsyncClient):
+    """Test creating a recurring task with habitual behavior."""
+    now = datetime.now(timezone.utc)
+    scheduled_at = now.replace(hour=9, minute=0, second=0, microsecond=0)
+
+    response = await client.post(
+        "/tasks",
+        json={
+            "title": "Daily meditation",
+            "is_recurring": True,
+            "recurrence_rule": "FREQ=DAILY",
+            "scheduled_at": scheduled_at.isoformat(),
+            "scheduling_mode": "floating",
+            "recurrence_behavior": "habitual",
+        },
+    )
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["is_recurring"] is True
+    assert data["recurrence_behavior"] == "habitual"
+
+
+@pytest.mark.asyncio
+async def test_create_recurring_task_with_essential_behavior(client: AsyncClient):
+    """Test creating a recurring task with essential behavior."""
+    now = datetime.now(timezone.utc)
+    scheduled_at = now.replace(hour=9, minute=0, second=0, microsecond=0)
+
+    response = await client.post(
+        "/tasks",
+        json={
+            "title": "Take medication",
+            "is_recurring": True,
+            "recurrence_rule": "FREQ=DAILY",
+            "scheduled_at": scheduled_at.isoformat(),
+            "scheduling_mode": "floating",
+            "recurrence_behavior": "essential",
+        },
+    )
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["is_recurring"] is True
+    assert data["recurrence_behavior"] == "essential"
+
+
+@pytest.mark.asyncio
+async def test_create_recurring_task_requires_recurrence_behavior(client: AsyncClient):
+    """Test that creating a recurring task without recurrence_behavior fails."""
+    now = datetime.now(timezone.utc)
+    scheduled_at = now.replace(hour=9, minute=0, second=0, microsecond=0)
+
+    response = await client.post(
+        "/tasks",
+        json={
+            "title": "Missing behavior",
+            "is_recurring": True,
+            "recurrence_rule": "FREQ=DAILY",
+            "scheduled_at": scheduled_at.isoformat(),
+            "scheduling_mode": "floating",
+            # No recurrence_behavior
+        },
+    )
+
+    assert response.status_code == 400
+    assert "recurrence_behavior is required" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_create_non_recurring_task_rejects_recurrence_behavior(client: AsyncClient):
+    """Test that non-recurring tasks cannot have recurrence_behavior."""
+    response = await client.post(
+        "/tasks",
+        json={
+            "title": "One-time task",
+            "is_recurring": False,
+            "recurrence_behavior": "habitual",  # Should not be allowed
+        },
+    )
+
+    assert response.status_code == 400
+    assert "recurrence_behavior should only be set for recurring tasks" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_update_recurring_task_recurrence_behavior(client: AsyncClient):
+    """Test updating recurrence_behavior on a recurring task."""
+    now = datetime.now(timezone.utc)
+    scheduled_at = now.replace(hour=9, minute=0, second=0, microsecond=0)
+
+    # Create with habitual
+    response = await client.post(
+        "/tasks",
+        json={
+            "title": "Flexible task",
+            "is_recurring": True,
+            "recurrence_rule": "FREQ=DAILY",
+            "scheduled_at": scheduled_at.isoformat(),
+            "scheduling_mode": "floating",
+            "recurrence_behavior": "habitual",
+        },
+    )
+    task_id = response.json()["id"]
+
+    # Update to essential
+    update_response = await client.patch(
+        f"/tasks/{task_id}",
+        json={"recurrence_behavior": "essential"},
+    )
+
+    assert update_response.status_code == 200
+    assert update_response.json()["recurrence_behavior"] == "essential"
+
+
+@pytest.mark.asyncio
+async def test_update_to_recurring_requires_recurrence_behavior(client: AsyncClient):
+    """Test that updating a task to recurring requires recurrence_behavior."""
+    # Create a non-recurring task
+    response = await client.post(
+        "/tasks",
+        json={"title": "Simple task"},
+    )
+    task_id = response.json()["id"]
+
+    # Try to make it recurring without recurrence_behavior
+    update_response = await client.patch(
+        f"/tasks/{task_id}",
+        json={
+            "is_recurring": True,
+            "recurrence_rule": "FREQ=DAILY",
+        },
+    )
+
+    assert update_response.status_code == 400
+    assert "recurrence_behavior is required" in update_response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_update_to_non_recurring_clears_recurrence_behavior(client: AsyncClient):
+    """Test that making a recurring task non-recurring clears recurrence_behavior."""
+    now = datetime.now(timezone.utc)
+    scheduled_at = now.replace(hour=9, minute=0, second=0, microsecond=0)
+
+    # Create recurring task
+    response = await client.post(
+        "/tasks",
+        json={
+            "title": "Will become non-recurring",
+            "is_recurring": True,
+            "recurrence_rule": "FREQ=DAILY",
+            "scheduled_at": scheduled_at.isoformat(),
+            "scheduling_mode": "floating",
+            "recurrence_behavior": "essential",
+        },
+    )
+    task_id = response.json()["id"]
+
+    # Make it non-recurring
+    update_response = await client.patch(
+        f"/tasks/{task_id}",
+        json={"is_recurring": False},
+    )
+
+    assert update_response.status_code == 200
+    assert update_response.json()["is_recurring"] is False
+    assert update_response.json()["recurrence_behavior"] is None

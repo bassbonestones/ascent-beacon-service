@@ -52,7 +52,9 @@ async def recurring_tasks(client: AsyncClient, test_user: User):
                 "title": f"Recurring Task {i + 1}",
                 "duration_minutes": 30,
                 "is_recurring": True,
-                "recurrence_pattern": "daily",
+                "recurrence_rule": "FREQ=DAILY",
+                "scheduling_mode": "floating",
+                "recurrence_behavior": "habitual",
             },
         )
         task_ids.append(response.json()["id"])
@@ -438,7 +440,9 @@ async def mixed_tasks(client: AsyncClient, test_user: User):
                 "title": f"Recurring Task {i + 1}",
                 "duration_minutes": 30,
                 "is_recurring": True,
-                "recurrence_pattern": "daily",
+                "recurrence_rule": "FREQ=DAILY",
+                "scheduling_mode": "floating",
+                "recurrence_behavior": "habitual",
             },
         )
         task_ids["recurring"].append(response.json()["id"])

@@ -92,6 +92,12 @@ class Task(Base, UUIDMixin, TimestampMixin):
     # Phase 4b: Optional reason when task is skipped
     skip_reason: Mapped[str | None] = mapped_column(String, nullable=True)
 
+    # Phase 4g: Recurrence behavior for recurring tasks
+    # 'habitual' = Auto-skip missed occurrences on app open
+    # 'essential' = Stays overdue until manually actioned
+    # NULL for non-recurring tasks, required for recurring tasks
+    recurrence_behavior: Mapped[str | None] = mapped_column(String, nullable=True)
+
     # Phase 4e: Sort order for anytime tasks (manual ordering)
     # NULL for non-anytime tasks, integer for anytime (lower = higher in list)
     sort_order: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -154,6 +160,16 @@ class Task(Base, UUIDMixin, TimestampMixin):
     def is_anytime(self) -> bool:
         """Check if task is an anytime task (no schedule, backlog)."""
         return self.scheduling_mode == "anytime"
+
+    @property
+    def is_habitual(self) -> bool:
+        """Check if task has habitual behavior (auto-skip missed)."""
+        return self.recurrence_behavior == "habitual"
+
+    @property
+    def is_essential(self) -> bool:
+        """Check if task has essential behavior (stays overdue)."""
+        return self.recurrence_behavior == "essential"
 
     def __repr__(self) -> str:
         status_icon = "✓" if self.is_completed else "○"

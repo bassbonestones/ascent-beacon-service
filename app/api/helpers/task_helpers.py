@@ -90,6 +90,7 @@ def task_to_response(
         scheduling_mode=task.scheduling_mode,
         is_recurring=task.is_recurring,
         recurrence_rule=task.recurrence_rule,
+        recurrence_behavior=task.recurrence_behavior,
         notify_before_minutes=task.notify_before_minutes,
         completed_at=task.completed_at,
         skip_reason=task.skip_reason,
