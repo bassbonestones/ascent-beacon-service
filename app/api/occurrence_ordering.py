@@ -152,15 +152,15 @@ async def _save_permanent_preferences(
         )
         
         # Get existing preferences for recurring task/occurrence combos
-        stmt = select(OccurrencePreference).where(
+        prefs_stmt = select(OccurrencePreference).where(
             and_(
                 OccurrencePreference.user_id == user_id,
                 OccurrencePreference.task_id.in_(recurring_task_ids),
             )
         )
-        result = await db.execute(stmt)
+        prefs_result = await db.execute(prefs_stmt)
         existing_prefs = {
-            (p.task_id, p.occurrence_index): p for p in result.scalars().all()
+            (p.task_id, p.occurrence_index): p for p in prefs_result.scalars().all()
         }
         
         # Assign sequence numbers based on position in full list (preserves order)
