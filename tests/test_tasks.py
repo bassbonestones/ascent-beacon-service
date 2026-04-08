@@ -1368,3 +1368,263 @@ async def test_update_to_non_recurring_clears_recurrence_behavior(client: AsyncC
     assert update_response.status_code == 200
     assert update_response.json()["is_recurring"] is False
     assert update_response.json()["recurrence_behavior"] is None
+
+
+# ============================================================================
+# Rhythm History Simulator Tests (Phase 4h)
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_bulk_completions_create(client: AsyncClient):
+    """Test creating bulk completions for a recurring task."""
+    now = datetime.now(timezone.utc)
+    scheduled_at = now.replace(hour=9, minute=0, second=0, microsecond=0)
+
+    # Create recurring task
+    response = await client.post(
+        "/tasks",
+        json={
+            "title": "Bulk test task",
+            "is_recurring": True,
+            "recurrence_rule": "FREQ=DAILY",
+            "scheduled_at": scheduled_at.isoformat(),
+            "scheduling_mode": "floating",
+            "recurrence_behavior": "habitual",
+        },
+    )
+    task_id = response.json()["id"]
+
+    # Create bulk completions
+    bulk_response = await client.post(
+        f"/tasks/{task_id}/completions/bulk",
+        json={
+            "entries": [
+                {"date": "2024-01-01", "status": "completed"},
+                {"date": "2024-01-02", "status": "completed"},
+                {"date": "2024-01-03", "status": "skipped", "skip_reason": "Sick day"},
+            ]
+        },
+    )
+
+    assert bulk_response.status_code == 200
+    data = bulk_response.json()
+    assert data["created_count"] == 3
+    assert data["task_id"] == task_id
+    assert data["start_date_updated"] is False
+
+
+@pytest.mark.asyncio
+async def test_bulk_completions_with_start_date_update(client: AsyncClient):
+    """Test creating bulk completions with start date update."""
+    now = datetime.now(timezone.utc)
+    scheduled_at = now.replace(hour=9, minute=0, second=0, microsecond=0)
+
+    # Create recurring task
+    response = await client.post(
+        "/tasks",
+        json={
+            "title": "Bulk test task with date update",
+            "is_recurring": True,
+            "recurrence_rule": "FREQ=DAILY",
+            "scheduled_at": scheduled_at.isoformat(),
+            "scheduling_mode": "floating",
+            "recurrence_behavior": "essential",
+        },
+    )
+    task_id = response.json()["id"]
+
+    # Create bulk completions with start date update
+    bulk_response = await client.post(
+        f"/tasks/{task_id}/completions/bulk",
+        json={
+            "entries": [
+                {"date": "2024-01-01", "status": "completed"},
+            ],
+            "update_start_date": "2024-01-01",
+        },
+    )
+
+    assert bulk_response.status_code == 200
+    data = bulk_response.json()
+    assert data["start_date_updated"] is True
+
+    # Verify task was updated
+    task_response = await client.get(f"/tasks/{task_id}")
+    assert task_response.status_code == 200
+    task_data = task_response.json()
+    assert task_data["scheduled_date"] == "2024-01-01"
+
+
+@pytest.mark.asyncio
+async def test_bulk_completions_multiple_occurrences(client: AsyncClient):
+    """Test creating bulk completions with multiple occurrences per day."""
+    now = datetime.now(timezone.utc)
+    scheduled_at = now.replace(hour=9, minute=0, second=0, microsecond=0)
+
+    # Create recurring task
+    response = await client.post(
+        "/tasks",
+        json={
+            "title": "Multi-occurrence task",
+            "is_recurring": True,
+            "recurrence_rule": "FREQ=DAILY",
+            "scheduled_at": scheduled_at.isoformat(),
+            "scheduling_mode": "floating",
+            "recurrence_behavior": "habitual",
+        },
+    )
+    task_id = response.json()["id"]
+
+    # Create bulk completions with multiple occurrences per day
+    bulk_response = await client.post(
+        f"/tasks/{task_id}/completions/bulk",
+        json={
+            "entries": [
+                {"date": "2024-01-01", "status": "completed", "occurrences": 3},
+                {"date": "2024-01-02", "status": "completed", "occurrences": 2},
+            ]
+        },
+    )
+
+    assert bulk_response.status_code == 200
+    data = bulk_response.json()
+    assert data["created_count"] == 5  # 3 + 2
+
+
+@pytest.mark.asyncio
+async def test_bulk_completions_non_recurring_fails(client: AsyncClient):
+    """Test that bulk completions fails for non-recurring tasks."""
+    # Create non-recurring task
+    response = await client.post(
+        "/tasks",
+        json={"title": "Non-recurring task"},
+    )
+    task_id = response.json()["id"]
+
+    # Try to create bulk completions
+    bulk_response = await client.post(
+        f"/tasks/{task_id}/completions/bulk",
+        json={
+            "entries": [{"date": "2024-01-01", "status": "completed"}]
+        },
+    )
+
+    assert bulk_response.status_code == 400
+    assert "recurring tasks" in bulk_response.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_delete_mock_completions(client: AsyncClient):
+    """Test deleting mock completions."""
+    now = datetime.now(timezone.utc)
+    scheduled_at = now.replace(hour=9, minute=0, second=0, microsecond=0)
+
+    # Create recurring task
+    response = await client.post(
+        "/tasks",
+        json={
+            "title": "Delete mock test",
+            "is_recurring": True,
+            "recurrence_rule": "FREQ=DAILY",
+            "scheduled_at": scheduled_at.isoformat(),
+            "scheduling_mode": "floating",
+            "recurrence_behavior": "habitual",
+        },
+    )
+    task_id = response.json()["id"]
+
+    # Create bulk completions (marked as MOCK)
+    await client.post(
+        f"/tasks/{task_id}/completions/bulk",
+        json={
+            "entries": [
+                {"date": "2024-01-01", "status": "completed"},
+                {"date": "2024-01-02", "status": "completed"},
+            ]
+        },
+    )
+
+    # Delete mock completions
+    delete_response = await client.delete(f"/tasks/{task_id}/completions/mock")
+
+    assert delete_response.status_code == 200
+    data = delete_response.json()
+    assert data["deleted_count"] == 2
+    assert data["task_id"] == task_id
+
+
+@pytest.mark.asyncio
+async def test_delete_mock_preserves_real_completions(client: AsyncClient):
+    """Test that deleting mock completions preserves real completions."""
+    now = datetime.now(timezone.utc)
+    scheduled_at = now.replace(hour=9, minute=0, second=0, microsecond=0)
+    today = now.strftime("%Y-%m-%d")
+
+    # Create recurring task
+    response = await client.post(
+        "/tasks",
+        json={
+            "title": "Preserve real test",
+            "is_recurring": True,
+            "recurrence_rule": "FREQ=DAILY",
+            "scheduled_at": scheduled_at.isoformat(),
+            "scheduling_mode": "floating",
+            "recurrence_behavior": "essential",
+        },
+    )
+    task_id = response.json()["id"]
+
+    # Create a real completion via normal complete endpoint
+    await client.post(
+        f"/tasks/{task_id}/complete",
+        json={
+            "scheduled_for": scheduled_at.isoformat(),
+            "local_date": today,
+        },
+    )
+
+    # Create mock completions
+    await client.post(
+        f"/tasks/{task_id}/completions/bulk",
+        json={
+            "entries": [
+                {"date": "2024-01-01", "status": "completed"},
+            ]
+        },
+    )
+
+    # Delete mock completions
+    delete_response = await client.delete(f"/tasks/{task_id}/completions/mock")
+
+    assert delete_response.status_code == 200
+    data = delete_response.json()
+    assert data["deleted_count"] == 1  # Only mock deleted, real preserved
+
+
+@pytest.mark.asyncio
+async def test_delete_mock_no_completions(client: AsyncClient):
+    """Test deleting mock completions when there are none."""
+    now = datetime.now(timezone.utc)
+    scheduled_at = now.replace(hour=9, minute=0, second=0, microsecond=0)
+
+    # Create recurring task
+    response = await client.post(
+        "/tasks",
+        json={
+            "title": "No mock test",
+            "is_recurring": True,
+            "recurrence_rule": "FREQ=DAILY",
+            "scheduled_at": scheduled_at.isoformat(),
+            "scheduling_mode": "floating",
+            "recurrence_behavior": "habitual",
+        },
+    )
+    task_id = response.json()["id"]
+
+    # Delete mock completions (should be 0)
+    delete_response = await client.delete(f"/tasks/{task_id}/completions/mock")
+
+    assert delete_response.status_code == 200
+    data = delete_response.json()
+    assert data["deleted_count"] == 0

@@ -398,3 +398,64 @@ class DeleteFutureCompletionsResponse(BaseModel):
     """Response for deleting future completions (time machine reset)."""
 
     deleted_count: int
+
+
+# ============================================================================
+# Rhythm History Simulator Schemas (Phase 4h)
+# ============================================================================
+
+
+class BulkCompletionEntry(BaseModel):
+    """Single entry for bulk completion creation."""
+
+    date: str = Field(
+        ...,
+        pattern=r"^\d{4}-\d{2}-\d{2}$",
+        description="Date in YYYY-MM-DD format"
+    )
+    status: Literal["completed", "skipped"] = Field(
+        default="completed",
+        description="Status for all occurrences on this date"
+    )
+    skip_reason: str | None = Field(
+        default=None,
+        max_length=500,
+        description="Optional reason when status is 'skipped'"
+    )
+    occurrences: int = Field(
+        default=1,
+        ge=1,
+        le=20,
+        description="Number of occurrences to create for this date"
+    )
+
+
+class BulkCompletionsRequest(BaseModel):
+    """Request to create bulk completions for Rhythm History Simulator."""
+
+    entries: list[BulkCompletionEntry] = Field(
+        ...,
+        min_length=1,
+        max_length=365,
+        description="List of dates with completion status"
+    )
+    update_start_date: str | None = Field(
+        default=None,
+        pattern=r"^\d{4}-\d{2}-\d{2}$",
+        description="Optional: update task's scheduled_date to this value"
+    )
+
+
+class BulkCompletionsResponse(BaseModel):
+    """Response for bulk completion creation."""
+
+    created_count: int
+    task_id: str
+    start_date_updated: bool = False
+
+
+class DeleteMockCompletionsResponse(BaseModel):
+    """Response for deleting mock completions."""
+
+    deleted_count: int
+    task_id: str

@@ -55,6 +55,11 @@ class TaskCompletion(Base, UUIDMixin):
         String(10), nullable=True
     )
 
+    # Source of completion: REAL (user interaction) or MOCK (Rhythm Simulator)
+    source: Mapped[str | None] = mapped_column(
+        String(10), nullable=True, default="REAL"
+    )
+
     # Created timestamp (no updated_at since completions are immutable)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
