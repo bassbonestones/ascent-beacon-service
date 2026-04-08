@@ -54,6 +54,7 @@ class TaskCompletionResponse(BaseModel):
     skip_reason: str | None = None
     completed_at: datetime
     scheduled_for: datetime | None = None
+    source: str | None = None  # REAL | MOCK
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)

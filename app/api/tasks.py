@@ -931,6 +931,13 @@ async def create_bulk_completions(
             detail="Bulk completions only supported for recurring tasks",
         )
 
+    # Clear existing mock completions first (replace, not add)
+    delete_stmt = delete(TaskCompletion).where(
+        TaskCompletion.task_id == task.id,
+        TaskCompletion.source == "MOCK",
+    )
+    await db.execute(delete_stmt)
+
     # Optionally update task start date
     start_date_updated = False
     if request.update_start_date:

@@ -1493,6 +1493,55 @@ async def test_bulk_completions_multiple_occurrences(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_bulk_completions_replaces_mock(client: AsyncClient):
+    """Test that bulk completions replaces existing mock data (not adds)."""
+    now = datetime.now(timezone.utc)
+    scheduled_at = now.replace(hour=9, minute=0, second=0, microsecond=0)
+
+    # Create recurring task
+    response = await client.post(
+        "/tasks",
+        json={
+            "title": "Replace test task",
+            "is_recurring": True,
+            "recurrence_rule": "FREQ=DAILY",
+            "scheduled_at": scheduled_at.isoformat(),
+            "scheduling_mode": "floating",
+            "recurrence_behavior": "habitual",
+        },
+    )
+    task_id = response.json()["id"]
+
+    # Create first bulk completions
+    await client.post(
+        f"/tasks/{task_id}/completions/bulk",
+        json={
+            "entries": [
+                {"date": "2024-01-01", "status": "completed", "occurrences": 3},
+            ]
+        },
+    )
+
+    # Create second bulk completions (should replace, not add)
+    bulk_response = await client.post(
+        f"/tasks/{task_id}/completions/bulk",
+        json={
+            "entries": [
+                {"date": "2024-01-02", "status": "completed", "occurrences": 2},
+            ]
+        },
+    )
+
+    assert bulk_response.status_code == 200
+
+    # Get all completions - should only have 2 (not 5)
+    completions_response = await client.get(f"/tasks/{task_id}/completions")
+    assert completions_response.status_code == 200
+    completions = completions_response.json()["completions"]
+    assert len(completions) == 2
+
+
+@pytest.mark.asyncio
 async def test_bulk_completions_non_recurring_fails(client: AsyncClient):
     """Test that bulk completions fails for non-recurring tasks."""
     # Create non-recurring task
