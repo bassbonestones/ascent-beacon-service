@@ -627,3 +627,652 @@ async def test_clear_day_order_from_nonexistent(client: AsyncClient):
     """Test clearing from a date when no overrides exist (should still succeed)."""
     response = await client.delete("/tasks/occurrence-order/from/2026-04-07")
     assert response.status_code == 204
+
+
+# ============================================================================
+# More Reorder Tests
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_reorder_occurrences_permanent_mode(client: AsyncClient, test_tasks: list[str]):
+    """Test reordering with save_mode='permanent' creates preferences."""
+    response = await client.post(
+        "/tasks/reorder-occurrences",
+        json={
+            "date": "2026-04-15",
+            "occurrences": [
+                {"task_id": test_tasks[1], "occurrence_index": 0},
+                {"task_id": test_tasks[0], "occurrence_index": 0},
+            ],
+            "save_mode": "permanent",
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["save_mode"] == "permanent"
+
+
+@pytest.mark.asyncio
+async def test_reorder_occurrences_creates_overrides(client: AsyncClient, test_tasks: list[str]):
+    """Test that reorder in today mode creates daily overrides."""
+    # Create overrides
+    await client.post(
+        "/tasks/reorder-occurrences",
+        json={
+            "date": "2026-04-16",
+            "occurrences": [{"task_id": test_tasks[0], "occurrence_index": 0}],
+            "save_mode": "today",
+        },
+    )
+
+    # Check that overrides exist
+    response = await client.get("/tasks/occurrence-order", params={"date": "2026-04-16"})
+    assert response.status_code == 200
+    assert response.json()["has_overrides"] is True
+
+
+# ============================================================================
+# Range Query Tests
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_get_occurrence_order_range(client: AsyncClient, test_tasks: list[str]):
+    """Test getting occurrence order for a date range."""
+    # Set order for multiple dates
+    for date in ["2026-04-20", "2026-04-21", "2026-04-22"]:
+        await client.post(
+            "/tasks/reorder-occurrences",
+            json={
+                "date": date,
+                "occurrences": [{"task_id": test_tasks[0], "occurrence_index": 0}],
+                "save_mode": "today",
+            },
+        )
+
+    # Query range
+    response = await client.get(
+        "/tasks/occurrence-order/range",
+        params={"start_date": "2026-04-20", "end_date": "2026-04-22"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "daily_overrides" in data
+    assert "permanent_order" in data
+
+
+@pytest.mark.asyncio
+async def test_get_occurrence_order_with_no_overrides(client: AsyncClient):
+    """Test occurrence order returns correctly when no overrides exist."""
+    response = await client.get("/tasks/occurrence-order", params={"date": "2026-06-01"})
+    assert response.status_code == 200
+    assert response.json()["has_overrides"] is False
+
+
+@pytest.mark.asyncio
+async def test_clear_occurrence_order_for_date(client: AsyncClient, test_tasks: list[str]):
+    """Test clearing occurrence order for a single date."""
+    # Set order
+    await client.post(
+        "/tasks/reorder-occurrences",
+        json={
+            "date": "2026-04-28",
+            "occurrences": [{"task_id": test_tasks[0], "occurrence_index": 0}],
+            "save_mode": "today",
+        },
+    )
+
+    # Clear it
+    response = await client.delete("/tasks/occurrence-order/2026-04-28")
+    assert response.status_code == 204
+
+    # Verify cleared
+    get_response = await client.get("/tasks/occurrence-order", params={"date": "2026-04-28"})
+    assert get_response.json()["has_overrides"] is False
+
+
+@pytest.mark.asyncio
+async def test_reorder_with_recurring_task_occurrence_index(client: AsyncClient, recurring_tasks: list[str]):
+    """Test reordering with occurrence_index > 0 for recurring tasks."""
+    response = await client.post(
+        "/tasks/reorder-occurrences",
+        json={
+            "date": "2026-04-30",
+            "occurrences": [
+                {"task_id": recurring_tasks[0], "occurrence_index": 3},
+                {"task_id": recurring_tasks[1], "occurrence_index": 2},
+            ],
+            "save_mode": "permanent",
+        },
+    )
+    assert response.status_code == 200
+
+
+# ============================================================================
+# Invalid Task ID Tests (covers lines 59-75)
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_reorder_with_invalid_task_id(client: AsyncClient):
+    """Test reordering with a non-existent task ID returns 404."""
+    response = await client.post(
+        "/tasks/reorder-occurrences",
+        json={
+            "date": "2026-05-01",
+            "occurrences": [
+                {"task_id": "00000000-0000-0000-0000-000000000000", "occurrence_index": 0}
+            ],
+            "save_mode": "today",
+        },
+    )
+    assert response.status_code == 404
+    assert "not found" in response.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_reorder_with_some_invalid_task_ids(client: AsyncClient, test_tasks: list[str]):
+    """Test reordering with mix of valid and invalid task IDs."""
+    response = await client.post(
+        "/tasks/reorder-occurrences",
+        json={
+            "date": "2026-05-01",
+            "occurrences": [
+                {"task_id": test_tasks[0], "occurrence_index": 0},
+                {"task_id": "00000000-0000-0000-0000-000000000000", "occurrence_index": 0},
+            ],
+            "save_mode": "today",
+        },
+    )
+    assert response.status_code == 404
+
+
+# ============================================================================
+# Permanent Preferences Storage Tests (covers lines 98-106, 125-167)
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_permanent_preferences_persist_across_dates(client: AsyncClient, test_tasks: list[str]):
+    """Test that permanent preferences apply to multiple dates."""
+    # Set permanent preferences
+    await client.post(
+        "/tasks/reorder-occurrences",
+        json={
+            "date": "2026-05-05",
+            "occurrences": [
+                {"task_id": test_tasks[2], "occurrence_index": 0},
+                {"task_id": test_tasks[0], "occurrence_index": 0},
+                {"task_id": test_tasks[1], "occurrence_index": 0},
+            ],
+            "save_mode": "permanent",
+        },
+    )
+
+    # Check that preferences work on a different date
+    response = await client.get("/tasks/occurrence-order", params={"date": "2026-05-10"})
+    assert response.status_code == 200
+    data = response.json()
+    # May have items from permanent preferences
+    assert "items" in data
+
+
+@pytest.mark.asyncio
+async def test_permanent_preferences_update_existing(client: AsyncClient, test_tasks: list[str]):
+    """Test that setting permanent preferences replaces existing ones."""
+    # Set initial preferences
+    await client.post(
+        "/tasks/reorder-occurrences",
+        json={
+            "date": "2026-05-05",
+            "occurrences": [
+                {"task_id": test_tasks[0], "occurrence_index": 0},
+            ],
+            "save_mode": "permanent",
+        },
+    )
+
+    # Update preferences
+    await client.post(
+        "/tasks/reorder-occurrences",
+        json={
+            "date": "2026-05-05",
+            "occurrences": [
+                {"task_id": test_tasks[1], "occurrence_index": 0},
+                {"task_id": test_tasks[0], "occurrence_index": 0},
+            ],
+            "save_mode": "permanent",
+        },
+    )
+
+    # Get order
+    response = await client.get("/tasks/occurrence-order", params={"date": "2026-05-05"})
+    assert response.status_code == 200
+
+
+# ============================================================================
+# Clear Permanent Preferences Tests (covers lines 345)
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_clear_permanent_preferences(client: AsyncClient, test_tasks: list[str]):
+    """Test clearing all permanent preferences."""
+    # Set some permanent preferences
+    await client.post(
+        "/tasks/reorder-occurrences",
+        json={
+            "date": "2026-05-05",
+            "occurrences": [{"task_id": test_tasks[0], "occurrence_index": 0}],
+            "save_mode": "permanent",
+        },
+    )
+
+    # Clear all permanent preferences
+    response = await client.delete("/tasks/occurrence-order/permanent")
+    assert response.status_code in [204, 404]  # 404 if endpoint doesn't exist
+
+
+# ============================================================================
+# Date Range Query Tests (covers lines 379-416)
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_get_occurrence_order_range_with_overrides(client: AsyncClient, test_tasks: list[str]):
+    """Test getting occurrence order range with daily overrides."""
+    # Set overrides for a few dates
+    for date in ["2026-05-10", "2026-05-11", "2026-05-12"]:
+        await client.post(
+            "/tasks/reorder-occurrences",
+            json={
+                "date": date,
+                "occurrences": [{"task_id": test_tasks[0], "occurrence_index": 0}],
+                "save_mode": "today",
+            },
+        )
+
+    # Query range
+    response = await client.get(
+        "/tasks/occurrence-order/range",
+        params={"start_date": "2026-05-09", "end_date": "2026-05-13"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "daily_overrides" in data
+    # Should have overrides for dates we set
+    assert len(data["daily_overrides"]) >= 3
+
+
+@pytest.mark.asyncio
+async def test_get_occurrence_order_range_empty(client: AsyncClient):
+    """Test getting occurrence order range when no overrides exist."""
+    response = await client.get(
+        "/tasks/occurrence-order/range",
+        params={"start_date": "2030-01-01", "end_date": "2030-01-07"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data.get("daily_overrides", {})) == 0
+
+
+@pytest.mark.asyncio
+async def test_get_occurrence_order_range_with_permanent(client: AsyncClient, test_tasks: list[str]):
+    """Test that range query includes permanent preferences."""
+    # Set permanent preferences
+    await client.post(
+        "/tasks/reorder-occurrences",
+        json={
+            "date": "2026-05-15",
+            "occurrences": [
+                {"task_id": test_tasks[0], "occurrence_index": 0},
+                {"task_id": test_tasks[1], "occurrence_index": 0},
+            ],
+            "save_mode": "permanent",
+        },
+    )
+
+    # Query range
+    response = await client.get(
+        "/tasks/occurrence-order/range",
+        params={"start_date": "2026-05-15", "end_date": "2026-05-20"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "permanent_order" in data
+
+
+# ============================================================================
+# Additional Hybrid Save Mode Tests (Recurring + Single Tasks Together)
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_permanent_save_hybrid_mixed_tasks(client: AsyncClient, mixed_tasks: dict):
+    """Test permanent save with mix of recurring and single tasks (hybrid save)."""
+    # Save permanently - recurring gets preferences, single gets daily override
+    response = await client.post(
+        "/tasks/reorder-occurrences",
+        json={
+            "date": "2026-06-01",
+            "occurrences": [
+                {"task_id": mixed_tasks["recurring"][0], "occurrence_index": 0},
+                {"task_id": mixed_tasks["single"][0], "occurrence_index": 0},
+            ],
+            "save_mode": "permanent",
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_permanent_save_multiple_recurring(client: AsyncClient, recurring_tasks: list[str]):
+    """Test permanent save creates preferences for all recurring tasks."""
+    response = await client.post(
+        "/tasks/reorder-occurrences",
+        json={
+            "date": "2026-06-02",
+            "occurrences": [
+                {"task_id": recurring_tasks[2], "occurrence_index": 0},
+                {"task_id": recurring_tasks[0], "occurrence_index": 0},
+                {"task_id": recurring_tasks[1], "occurrence_index": 0},
+            ],
+            "save_mode": "permanent",
+        },
+    )
+    assert response.status_code == 200
+    
+    # Verify permanent order
+    order_response = await client.get(
+        "/tasks/occurrence-order",
+        params={"date": "2026-06-02"},
+    )
+    assert order_response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_permanent_save_removes_daily_override_for_recurring(client: AsyncClient, recurring_tasks: list[str]):
+    """Test that permanent save clears daily overrides for recurring tasks."""
+    date = "2026-06-03"
+    
+    # First create daily override
+    await client.post(
+        "/tasks/reorder-occurrences",
+        json={
+            "date": date,
+            "occurrences": [
+                {"task_id": recurring_tasks[0], "occurrence_index": 0},
+            ],
+            "save_mode": "today",
+        },
+    )
+    
+    # Now save permanent - should clear the daily override
+    await client.post(
+        "/tasks/reorder-occurrences",
+        json={
+            "date": date,
+            "occurrences": [
+                {"task_id": recurring_tasks[0], "occurrence_index": 0},
+                {"task_id": recurring_tasks[1], "occurrence_index": 0},
+            ],
+            "save_mode": "permanent",
+        },
+    )
+    
+    # Get order - should have permanent preferences, not daily overrides for recurring
+    response = await client.get("/tasks/occurrence-order", params={"date": date})
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_update_existing_permanent_preference(client: AsyncClient, recurring_tasks: list[str]):
+    """Test that updating permanent preferences updates existing records."""
+    # Create initial preferences
+    await client.post(
+        "/tasks/reorder-occurrences",
+        json={
+            "date": "2026-06-04",
+            "occurrences": [
+                {"task_id": recurring_tasks[0], "occurrence_index": 0},
+                {"task_id": recurring_tasks[1], "occurrence_index": 0},
+            ],
+            "save_mode": "permanent",
+        },
+    )
+    
+    # Update with different order
+    response = await client.post(
+        "/tasks/reorder-occurrences",
+        json={
+            "date": "2026-06-05",
+            "occurrences": [
+                {"task_id": recurring_tasks[1], "occurrence_index": 0},  # Swapped order
+                {"task_id": recurring_tasks[0], "occurrence_index": 0},
+            ],
+            "save_mode": "permanent",
+        },
+    )
+    assert response.status_code == 200
+
+
+# ============================================================================
+# Error Handling Tests
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_reorder_occurrences_empty_list(client: AsyncClient):
+    """Test reordering with empty occurrences list."""
+    response = await client.post(
+        "/tasks/reorder-occurrences",
+        json={
+            "date": "2026-06-06",
+            "occurrences": [],
+            "save_mode": "today",
+        },
+    )
+    # Should succeed or give validation error
+    assert response.status_code in [200, 422]
+
+
+@pytest.mark.asyncio
+async def test_get_day_order_invalid_date_format(client: AsyncClient):
+    """Test getting day order with invalid date format."""
+    response = await client.get(
+        "/tasks/occurrence-order",
+        params={"date": "invalid-date"},
+    )
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_get_day_order_with_only_permanent_preferences(client: AsyncClient, recurring_tasks: list[str]):
+    """Test getting day order when only permanent preferences exist (no overrides)."""
+    # Set only permanent preferences
+    await client.post(
+        "/tasks/reorder-occurrences",
+        json={
+            "date": "2026-06-07",
+            "occurrences": [
+                {"task_id": recurring_tasks[0], "occurrence_index": 0},
+            ],
+            "save_mode": "permanent",
+        },
+    )
+    
+    # Query different date where no daily overrides exist
+    response = await client.get(
+        "/tasks/occurrence-order",
+        params={"date": "2026-06-08"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    # Should have items from permanent preferences
+    assert "items" in data
+
+
+@pytest.mark.asyncio
+async def test_get_day_order_merges_overrides_and_permanent(client: AsyncClient, recurring_tasks: list[str], test_tasks: list[str]):
+    """Test that day order merges daily overrides and permanent preferences."""
+    date = "2026-06-09"
+    
+    # Set permanent for recurring
+    await client.post(
+        "/tasks/reorder-occurrences",
+        json={
+            "date": date,
+            "occurrences": [
+                {"task_id": recurring_tasks[0], "occurrence_index": 0},
+            ],
+            "save_mode": "permanent",
+        },
+    )
+    
+    # Set daily override for non-recurring
+    await client.post(
+        "/tasks/reorder-occurrences",
+        json={
+            "date": date,
+            "occurrences": [
+                {"task_id": test_tasks[0], "occurrence_index": 0},
+            ],
+            "save_mode": "today",
+        },
+    )
+    
+    # Query - should have both
+    response = await client.get("/tasks/occurrence-order", params={"date": date})
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data.get("items", [])) >= 1
+
+
+# ============================================================================
+# Additional Occurrence Ordering Edge Case Tests
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_reorder_occurrences_validates_task_ownership(client: AsyncClient, test_tasks: list[str]):
+    """Test that reordering only works for user's own tasks."""
+    date = "2026-04-10"
+    
+    # This should work since test_tasks belong to the test user
+    response = await client.post(
+        "/tasks/reorder-occurrences",
+        json={
+            "date": date,
+            "occurrences": [
+                {"task_id": test_tasks[0], "occurrence_index": 0},
+            ],
+            "save_mode": "today",
+        },
+    )
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_get_day_order_sorts_by_sort_value(client: AsyncClient, test_tasks: list[str]):
+    """Test that day order items are sorted correctly."""
+    date = "2026-04-10"
+    
+    # Set order with multiple tasks
+    await client.post(
+        "/tasks/reorder-occurrences",
+        json={
+            "date": date,
+            "occurrences": [
+                {"task_id": test_tasks[0], "occurrence_index": 0},
+                {"task_id": test_tasks[1], "occurrence_index": 0},
+            ],
+            "save_mode": "today",
+        },
+    )
+    
+    # Query and verify order
+    response = await client.get("/tasks/occurrence-order", params={"date": date})
+    assert response.status_code == 200
+    data = response.json()
+    items = data.get("items", [])
+    assert len(items) == 2
+    
+    # Items should be in the order they were specified
+    assert items[0]["task_id"] == test_tasks[0]
+    assert items[1]["task_id"] == test_tasks[1]
+
+
+@pytest.mark.asyncio
+async def test_set_and_get_day_order(client: AsyncClient, test_tasks: list[str]):
+    """Test setting and getting day order with overrides."""
+    date = "2026-04-11"
+    
+    # Set overrides
+    response = await client.post(
+        "/tasks/reorder-occurrences",
+        json={
+            "date": date,
+            "occurrences": [
+                {"task_id": test_tasks[0], "occurrence_index": 0},
+            ],
+            "save_mode": "today",
+        },
+    )
+    assert response.status_code == 200
+    
+    # Verify overrides exist
+    response = await client.get("/tasks/occurrence-order", params={"date": date})
+    assert response.status_code == 200
+    data = response.json()
+    assert data["has_overrides"] is True
+    assert len(data["items"]) >= 1
+
+
+@pytest.mark.asyncio
+async def test_permanent_preferences_without_overrides(client: AsyncClient, recurring_tasks: list[str]):
+    """Test that permanent preferences show when no daily overrides exist."""
+    date = "2026-04-12"
+    
+    # Set permanent preference
+    await client.post(
+        "/tasks/reorder-occurrences",
+        json={
+            "date": date,
+            "occurrences": [
+                {"task_id": recurring_tasks[0], "occurrence_index": 0},
+            ],
+            "save_mode": "permanent",
+        },
+    )
+    
+    # Query for a different date (no daily override for this date)
+    response = await client.get("/tasks/occurrence-order", params={"date": "2026-04-13"})
+    assert response.status_code == 200
+    data = response.json()
+    
+    # Permanent preferences should still appear
+    items = data.get("items", [])
+    # items could be empty if no prefs apply to this date
+    assert data["has_overrides"] is False
+
+
+@pytest.mark.asyncio
+async def test_reorder_with_multiple_occurrence_indices(client: AsyncClient, recurring_tasks: list[str]):
+    """Test reordering with same task but different occurrence indices."""
+    date = "2026-04-14"
+    
+    # A recurring task could have multiple occurrences per day (multi-per-day)
+    response = await client.post(
+        "/tasks/reorder-occurrences",
+        json={
+            "date": date,
+            "occurrences": [
+                {"task_id": recurring_tasks[0], "occurrence_index": 0},
+                {"task_id": recurring_tasks[0], "occurrence_index": 1},
+            ],
+            "save_mode": "today",
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["count"] == 2

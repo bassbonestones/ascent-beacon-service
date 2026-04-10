@@ -9,6 +9,7 @@ addopts = [
     "-v",
     "--tb=short",
     "--strict-markers",
+    "-n", "auto",
 ]
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
@@ -28,7 +29,9 @@ ignore_missing_imports = true
 [tool.coverage.run]
 source = ["app"]
 omit = ["app/__init__.py", "*/tests/*"]
-concurrency = ["greenlet", "thread"]
+branch = true
+parallel = true
+concurrency = ["multiprocessing"]
 
 [tool.coverage.report]
 exclude_lines = [

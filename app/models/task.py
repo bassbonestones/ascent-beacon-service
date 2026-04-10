@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from app.models.user import User
     from app.models.occurrence_preference import OccurrencePreference
     from app.models.daily_sort_override import DailySortOverride
+    from app.models.dependency import DependencyRule, DependencyStateCache
 
 
 class Task(Base, UUIDMixin, TimestampMixin):
@@ -118,6 +119,27 @@ class Task(Base, UUIDMixin, TimestampMixin):
     )
     daily_sort_overrides: Mapped[List["DailySortOverride"]] = relationship(
         "DailySortOverride",
+        back_populates="task",
+        cascade="all, delete-orphan",
+    )
+    # Phase 4i: Dependency relationships
+    # Rules where this task is the upstream (prerequisite)
+    downstream_dependency_rules: Mapped[List["DependencyRule"]] = relationship(
+        "DependencyRule",
+        foreign_keys="DependencyRule.upstream_task_id",
+        back_populates="upstream_task",
+        cascade="all, delete-orphan",
+    )
+    # Rules where this task is the downstream (dependent)
+    upstream_dependency_rules: Mapped[List["DependencyRule"]] = relationship(
+        "DependencyRule",
+        foreign_keys="DependencyRule.downstream_task_id",
+        back_populates="downstream_task",
+        cascade="all, delete-orphan",
+    )
+    # Cached dependency state for this task's occurrences
+    dependency_state_cache: Mapped[List["DependencyStateCache"]] = relationship(
+        "DependencyStateCache",
         back_populates="task",
         cascade="all, delete-orphan",
     )

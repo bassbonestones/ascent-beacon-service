@@ -1,6 +1,29 @@
 """Test fixtures for pytest."""
 
+# === DIRECTORY CHECK (must come before any app imports) ===
 import os
+import sys
+from pathlib import Path
+
+_expected_root = Path(__file__).parent.parent.resolve()
+_cwd = Path.cwd().resolve()
+
+# Fail fast with clear error if running from wrong directory
+if _cwd != _expected_root:
+    raise RuntimeError(
+        f"\n\n❌ Tests must be run from the service directory!\n"
+        f"   Expected: {_expected_root}\n"
+        f"   Got:      {_cwd}\n\n"
+        f"   Fix: cd {_expected_root} && pytest\n"
+    )
+
+# Ensure app is importable
+if str(_expected_root) not in sys.path:
+    sys.path.insert(0, str(_expected_root))
+# === END DIRECTORY CHECK ===
+
+import asyncio
+import gc
 from collections.abc import AsyncGenerator
 from typing import Any
 from uuid import uuid4
@@ -42,20 +65,26 @@ async def test_engine():
     
     yield engine
     
+    # CRITICAL: Explicitly dispose engine to close aiosqlite worker threads
     await engine.dispose()
 
 
 @pytest.fixture
 async def db_session(test_engine) -> AsyncGenerator[AsyncSession, None]:
-    """Create a test database session."""
+    """Create a test database session with explicit cleanup."""
     async_session = async_sessionmaker(
         test_engine,
         class_=AsyncSession,
         expire_on_commit=False,
     )
     
-    async with async_session() as session:
+    session = async_session()
+    try:
         yield session
+    finally:
+        # CRITICAL: Rollback any pending transactions then close session
+        await session.rollback()
+        await session.close()
 
 
 @pytest.fixture

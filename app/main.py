@@ -21,10 +21,11 @@ from app.api import (
     discovery,
     goals,
     tasks,
-    tasks_status,
+    # tasks_status removed - duplicate routes already in tasks.py
     tasks_views,
     task_stats,
     occurrence_ordering,
+    dependencies,
 )
 
 
@@ -79,10 +80,11 @@ app.include_router(discovery.router)
 app.include_router(goals.router)
 app.include_router(occurrence_ordering.router)  # Before tasks to avoid {task_id} conflict
 app.include_router(tasks.router)
-app.include_router(tasks_status.router)
+# NOTE: tasks_status.router removed - duplicate routes already in tasks.router
 app.include_router(tasks_views.router)
 app.include_router(tasks_views.completions_router)
 app.include_router(task_stats.router)
+app.include_router(dependencies.router)
 
 
 @app.get("/", include_in_schema=False)

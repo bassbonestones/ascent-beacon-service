@@ -11,6 +11,7 @@ from app.models.base import Base, UUIDMixin
 
 if TYPE_CHECKING:
     from app.models.task import Task
+    from app.models.dependency import DependencyResolution
 
 
 class TaskCompletion(Base, UUIDMixin):
@@ -69,6 +70,18 @@ class TaskCompletion(Base, UUIDMixin):
 
     # Relationships
     task: Mapped["Task"] = relationship("Task", back_populates="completions")
+    # Phase 4i: Dependency resolution relationships
+    dependency_resolutions_as_downstream: Mapped[list["DependencyResolution"]] = relationship(
+        "DependencyResolution",
+        foreign_keys="DependencyResolution.downstream_completion_id",
+        back_populates="downstream_completion",
+        cascade="all, delete-orphan",
+    )
+    dependency_resolutions_as_upstream: Mapped[list["DependencyResolution"]] = relationship(
+        "DependencyResolution",
+        foreign_keys="DependencyResolution.upstream_completion_id",
+        back_populates="upstream_completion",
+    )
 
     __table_args__ = (
         Index("ix_task_completions_task_id", "task_id"),

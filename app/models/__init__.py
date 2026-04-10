@@ -19,6 +19,7 @@ from app.models.assistant_session import AssistantSession
 from app.models.assistant_turn import AssistantTurn
 from app.models.assistant_recommendation import AssistantRecommendation
 from app.models.stt_request import STTRequest
+from app.models.dependency import DependencyRule, DependencyResolution, DependencyStateCache
 
 __all__ = [
     "Base",
@@ -44,5 +45,8 @@ __all__ = [
     "AssistantTurn",
     "AssistantRecommendation",
     "STTRequest",
+    "DependencyRule",
+    "DependencyResolution",
+    "DependencyStateCache",
 ]
 

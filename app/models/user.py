@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from app.models.stt_request import STTRequest
     from app.models.occurrence_preference import OccurrencePreference
     from app.models.daily_sort_override import DailySortOverride
+    from app.models.dependency import DependencyRule
 
 
 class User(Base, UUIDMixin, TimestampMixin):
@@ -77,6 +78,11 @@ class User(Base, UUIDMixin, TimestampMixin):
     )
     daily_sort_overrides: Mapped[list["DailySortOverride"]] = relationship(
         "DailySortOverride",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+    dependency_rules: Mapped[list["DependencyRule"]] = relationship(
+        "DependencyRule",
         back_populates="user",
         cascade="all, delete-orphan",
     )
