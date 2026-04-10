@@ -20,8 +20,11 @@ from app.api import (
     recommendations,
     discovery,
     goals,
-    tasks,
-    # tasks_status removed - duplicate routes already in tasks.py
+    tasks_crud,
+    tasks_list,
+    tasks_status,
+    tasks_anytime,
+    tasks_completions,
     tasks_views,
     task_stats,
     occurrence_ordering,
@@ -79,8 +82,13 @@ app.include_router(recommendations.router)
 app.include_router(discovery.router)
 app.include_router(goals.router)
 app.include_router(occurrence_ordering.router)  # Before tasks to avoid {task_id} conflict
-app.include_router(tasks.router)
-# NOTE: tasks_status.router removed - duplicate routes already in tasks.router
+# Task routers - split for maintainability (~200-300 lines each)
+# Order: completions and anytime first (more specific routes), then list/CRUD, then status
+app.include_router(tasks_completions.router)
+app.include_router(tasks_anytime.router)
+app.include_router(tasks_list.router)
+app.include_router(tasks_crud.router)
+app.include_router(tasks_status.router)
 app.include_router(tasks_views.router)
 app.include_router(tasks_views.completions_router)
 app.include_router(task_stats.router)

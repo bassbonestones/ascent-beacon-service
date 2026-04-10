@@ -4194,24 +4194,30 @@ class TestTaskStatusEndpointsMocked:
     async def test_reopen_completed_task(self):
         """Reopening a completed task sets status to pending."""
         from app.api.tasks_status import reopen_task
+        from app.schemas.tasks import ReopenTaskRequest
         
         mock_task = Mock()
         mock_task.id = "task-123"
         mock_task.status = "completed"
         mock_task.goal_id = "goal-123"
+        mock_task.is_recurring = False  # One-time task
         
         mock_db = AsyncMock()
         mock_user = Mock()
         mock_user.id = "user-123"
         
+        request = ReopenTaskRequest()
+        
         with patch("app.api.tasks_status.get_task_or_404") as mock_get_task, \
              patch("app.api.tasks_status.task_to_response") as mock_to_response, \
-             patch("app.api.tasks_status.update_goal_progress") as mock_update_goal:
+             patch("app.api.tasks_status.update_goal_progress") as mock_update_goal, \
+             patch("app.api.tasks_status.assign_sort_order_for_anytime") as mock_assign:
             mock_get_task.return_value = mock_task
             mock_to_response.return_value = Mock()
             mock_update_goal.return_value = None
+            mock_assign.return_value = None
             
-            await reopen_task("task-123", mock_user, mock_db)
+            await reopen_task("task-123", request, mock_user, mock_db)
             
             assert mock_task.status == "pending"
             assert mock_task.completed_at is None
@@ -4220,21 +4226,25 @@ class TestTaskStatusEndpointsMocked:
     async def test_reopen_already_pending_task_raises_error(self):
         """Reopening an already pending task raises error."""
         from app.api.tasks_status import reopen_task
+        from app.schemas.tasks import ReopenTaskRequest
         from fastapi import HTTPException
         
         mock_task = Mock()
         mock_task.id = "task-123"
         mock_task.status = "pending"  # Already pending
+        mock_task.is_recurring = False  # One-time task
         
         mock_db = AsyncMock()
         mock_user = Mock()
         mock_user.id = "user-123"
         
+        request = ReopenTaskRequest()
+        
         with patch("app.api.tasks_status.get_task_or_404") as mock_get_task:
             mock_get_task.return_value = mock_task
             
             with pytest.raises(HTTPException) as exc_info:
-                await reopen_task("task-123", mock_user, mock_db)
+                await reopen_task("task-123", request, mock_user, mock_db)
             
             assert exc_info.value.status_code == 400
             assert "already pending" in exc_info.value.detail
@@ -4947,7 +4957,7 @@ class TestTaskAPIValidation:
     @pytest.mark.asyncio
     async def test_create_task_anytime_recurring_rejected(self):
         """Anytime tasks cannot be recurring."""
-        from app.api.tasks import create_task
+        from app.api.tasks_crud import create_task
         from app.schemas.tasks import CreateTaskRequest
         from fastapi import HTTPException
         
@@ -4972,7 +4982,7 @@ class TestTaskAPIValidation:
     @pytest.mark.asyncio
     async def test_create_task_recurring_missing_behavior(self):
         """Recurring tasks must have recurrence_behavior."""
-        from app.api.tasks import create_task
+        from app.api.tasks_crud import create_task
         from app.schemas.tasks import CreateTaskRequest
         from fastapi import HTTPException
         
@@ -4996,7 +5006,7 @@ class TestTaskAPIValidation:
     @pytest.mark.asyncio
     async def test_create_task_non_recurring_with_behavior_rejected(self):
         """Non-recurring tasks should not have recurrence_behavior."""
-        from app.api.tasks import create_task
+        from app.api.tasks_crud import create_task
         from app.schemas.tasks import CreateTaskRequest
         from fastapi import HTTPException
         
