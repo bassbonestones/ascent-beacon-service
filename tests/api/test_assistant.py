@@ -172,3 +172,92 @@ async def test_send_message_with_recommendations(client: AsyncClient):
         )
     
     assert response.status_code == 200
+    data = response.json()
+    assert data["recommendation_id"] is not None
+    assert "proposed value" in data["response"].lower()
+
+
+@pytest.mark.asyncio
+async def test_send_message_llm_error_returns_500(client: AsyncClient):
+    """Test that LLM errors return 500 status code."""
+    # Create session
+    create_response = await client.post(
+        "/assistant/sessions",
+        json={"context_mode": "values"},
+    )
+    session_id = create_response.json()["id"]
+    
+    # Mock LLM to raise exception
+    with patch(
+        "app.api.assistant.LLMService.get_recommendation",
+        new_callable=AsyncMock,
+        side_effect=Exception("API connection failed"),
+    ):
+        response = await client.post(
+            f"/assistant/sessions/{session_id}/message",
+            json={"content": "Hello"},
+        )
+    
+    assert response.status_code == 500
+    assert "Failed to get LLM response" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_get_session_with_turns(client: AsyncClient):
+    """Test retrieving session shows conversation history."""
+    # Create session
+    create_response = await client.post(
+        "/assistant/sessions",
+        json={"context_mode": "values"},
+    )
+    session_id = create_response.json()["id"]
+    
+    # Send a message
+    mock_llm_response = {
+        "choices": [{
+            "message": {"content": "Hello!", "role": "assistant"}
+        }],
+    }
+    with patch(
+        "app.api.assistant.LLMService.get_recommendation",
+        new_callable=AsyncMock,
+        return_value=mock_llm_response,
+    ):
+        await client.post(
+            f"/assistant/sessions/{session_id}/message",
+            json={"content": "Hi there"},
+        )
+    
+    # Get session - should include turns
+    response = await client.get(f"/assistant/sessions/{session_id}")
+    
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["turns"]) == 2  # User message + assistant response
+
+
+@pytest.mark.asyncio
+async def test_send_message_with_voice_modality(client: AsyncClient):
+    """Test sending message with voice input modality."""
+    create_response = await client.post(
+        "/assistant/sessions",
+        json={"context_mode": "values"},
+    )
+    session_id = create_response.json()["id"]
+    
+    mock_llm_response = {
+        "choices": [{
+            "message": {"content": "I understand.", "role": "assistant"}
+        }],
+    }
+    with patch(
+        "app.api.assistant.LLMService.get_recommendation",
+        new_callable=AsyncMock,
+        return_value=mock_llm_response,
+    ):
+        response = await client.post(
+            f"/assistant/sessions/{session_id}/message",
+            json={"content": "Voice transcribed text", "input_modality": "voice"},
+        )
+    
+    assert response.status_code == 200

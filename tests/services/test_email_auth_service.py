@@ -287,3 +287,143 @@ async def test_verify_magic_link_already_used_token(db_session):
     
     with pytest.raises(ValueError, match="Invalid or expired token"):
         await EmailAuthService.verify_magic_link(db_session, token=code, email=email)
+
+
+# ============================================================================
+# verify_onboarding_email Tests
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_verify_onboarding_email_success(db_session):
+    """Test successful email verification during onboarding."""
+    from uuid import uuid4
+    from app.core.security import generate_verification_code
+    
+    # Create user with unverified email
+    user = User(
+        id=str(uuid4()),
+        display_name="Onboarding User",
+        primary_email="onboarding@example.com",
+        is_email_verified=False,
+    )
+    db_session.add(user)
+    await db_session.flush()
+    
+    # Create verification token
+    code = generate_verification_code()
+    token = EmailLoginToken(
+        email=user.primary_email,
+        token_hash=hash_token(code),
+        expires_at=utc_now() + timedelta(minutes=10),
+    )
+    db_session.add(token)
+    await db_session.commit()
+    
+    # Verify email
+    result = await EmailAuthService.verify_onboarding_email(
+        db_session, user_id=user.id, token=code
+    )
+    
+    assert result.is_email_verified is True
+    
+    # Check token is marked as used
+    await db_session.refresh(token)
+    assert token.used_at is not None
+
+
+@pytest.mark.asyncio
+async def test_verify_onboarding_email_user_not_found(db_session):
+    """Test verify_onboarding_email with non-existent user."""
+    from uuid import uuid4
+    
+    with pytest.raises(ValueError, match="User not found"):
+        await EmailAuthService.verify_onboarding_email(
+            db_session, user_id=str(uuid4()), token="123456"
+        )
+
+
+@pytest.mark.asyncio
+async def test_verify_onboarding_email_invalid_token(db_session):
+    """Test verify_onboarding_email with invalid token."""
+    from uuid import uuid4
+    
+    # Create user
+    user = User(
+        id=str(uuid4()),
+        display_name="Bad Token User",
+        primary_email="badtoken@example.com",
+        is_email_verified=False,
+    )
+    db_session.add(user)
+    await db_session.commit()
+    
+    with pytest.raises(ValueError, match="Invalid or expired verification token"):
+        await EmailAuthService.verify_onboarding_email(
+            db_session, user_id=user.id, token="000000"
+        )
+
+
+@pytest.mark.asyncio
+async def test_verify_onboarding_email_expired_token(db_session):
+    """Test verify_onboarding_email with expired token."""
+    from uuid import uuid4
+    from app.core.security import generate_verification_code
+    
+    # Create user
+    user = User(
+        id=str(uuid4()),
+        display_name="Expired Token User",
+        primary_email="expired@example.com",
+        is_email_verified=False,
+    )
+    db_session.add(user)
+    await db_session.flush()
+    
+    # Create expired token
+    code = generate_verification_code()
+    token = EmailLoginToken(
+        email=user.primary_email,
+        token_hash=hash_token(code),
+        expires_at=utc_now() - timedelta(minutes=1),  # Already expired
+    )
+    db_session.add(token)
+    await db_session.commit()
+    
+    with pytest.raises(ValueError, match="Invalid or expired verification token"):
+        await EmailAuthService.verify_onboarding_email(
+            db_session, user_id=user.id, token=code
+        )
+
+
+@pytest.mark.asyncio
+async def test_verify_onboarding_email_already_used_token(db_session):
+    """Test verify_onboarding_email with already used token."""
+    from uuid import uuid4
+    from app.core.security import generate_verification_code
+    
+    # Create user
+    user = User(
+        id=str(uuid4()),
+        display_name="Reused Token User",
+        primary_email="reusedtoken@example.com",
+        is_email_verified=False,
+    )
+    db_session.add(user)
+    await db_session.flush()
+    
+    # Create already-used token
+    code = generate_verification_code()
+    token = EmailLoginToken(
+        email=user.primary_email,
+        token_hash=hash_token(code),
+        expires_at=utc_now() + timedelta(minutes=10),
+        used_at=utc_now(),  # Already used
+    )
+    db_session.add(token)
+    await db_session.commit()
+    
+    with pytest.raises(ValueError, match="Invalid or expired verification token"):
+        await EmailAuthService.verify_onboarding_email(
+            db_session, user_id=user.id, token=code
+        )

@@ -280,3 +280,153 @@ async def test_logout_delegates(db_session):
         await AuthService.logout(db_session, "refresh_token_to_revoke")
         
         mock_logout.assert_called_once_with(db_session, "refresh_token_to_revoke")
+
+
+# ============================================================================
+# update_and_verify_email Tests
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_update_and_verify_email_user_not_found(db_session):
+    """Test update_and_verify_email with non-existent user."""
+    from uuid import uuid4
+    
+    with pytest.raises(ValueError, match="User not found"):
+        await AuthService.update_and_verify_email(
+            db_session, str(uuid4()), "new@example.com"
+        )
+
+
+@pytest.mark.asyncio
+async def test_update_and_verify_email_already_taken(db_session, test_user: User):
+    """Test update_and_verify_email when email is already in use."""
+    from uuid import uuid4
+    
+    # Create another user with the target email
+    other_user = User(
+        id=str(uuid4()),
+        display_name="Other User",
+        primary_email="taken@example.com",
+        is_email_verified=True,
+    )
+    db_session.add(other_user)
+    await db_session.commit()
+    
+    with pytest.raises(ValueError, match="Email already in use"):
+        await AuthService.update_and_verify_email(
+            db_session, test_user.id, "taken@example.com"
+        )
+
+
+@pytest.mark.asyncio
+async def test_update_and_verify_email_matches_oauth(db_session, test_user: User):
+    """Test update_and_verify_email when email matches OAuth email (auto-verify)."""
+    from app.models.user_identity import UserIdentity
+    
+    oauth_email = "oauth@example.com"
+    
+    # Create identity with this email
+    identity = UserIdentity(
+        user_id=test_user.id,
+        provider="google",
+        provider_subject="google123",
+        email=oauth_email,
+    )
+    db_session.add(identity)
+    await db_session.commit()
+    
+    # Update to the OAuth email - should auto-verify
+    result = await AuthService.update_and_verify_email(
+        db_session, test_user.id, oauth_email
+    )
+    
+    assert result.primary_email == oauth_email
+    assert result.is_email_verified is True
+
+
+@pytest.mark.asyncio
+async def test_update_and_verify_email_not_oauth_requires_verification(db_session, test_user: User):
+    """Test update_and_verify_email when email doesn't match OAuth email (requires verification)."""
+    from app.models.user_identity import UserIdentity
+    
+    # Create identity with different email
+    identity = UserIdentity(
+        user_id=test_user.id,
+        provider="google",
+        provider_subject="google123",
+        email="oauth@example.com",
+    )
+    db_session.add(identity)
+    await db_session.commit()
+    
+    new_email = "different@example.com"
+    
+    # Mock the email send
+    with patch(
+        "app.services.auth_service.EmailService.send_verification_code",
+        new_callable=AsyncMock,
+    ) as mock_send:
+        result = await AuthService.update_and_verify_email(
+            db_session, test_user.id, new_email
+        )
+        
+        # Should have called send_verification_code
+        mock_send.assert_called_once()
+        call_args = mock_send.call_args
+        assert call_args[0][0] == new_email
+    
+    assert result.primary_email == new_email
+    assert result.is_email_verified is False  # Not verified yet
+
+
+@pytest.mark.asyncio
+async def test_update_and_verify_email_force_verification(db_session, test_user: User):
+    """Test update_and_verify_email with force_verification=True."""
+    from app.models.user_identity import UserIdentity
+    
+    oauth_email = "oauth@example.com"
+    
+    # Create identity with same email
+    identity = UserIdentity(
+        user_id=test_user.id,
+        provider="google",
+        provider_subject="google123",
+        email=oauth_email,
+    )
+    db_session.add(identity)
+    await db_session.commit()
+    
+    # Even though email matches OAuth, force_verification makes it require verification
+    with patch(
+        "app.services.auth_service.EmailService.send_verification_code",
+        new_callable=AsyncMock,
+    ) as mock_send:
+        result = await AuthService.update_and_verify_email(
+            db_session, test_user.id, oauth_email, force_verification=True
+        )
+        
+        mock_send.assert_called_once()
+    
+    assert result.is_email_verified is False
+
+
+# ============================================================================
+# verify_onboarding_email Tests
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_verify_onboarding_email_delegates(db_session):
+    """Test that verify_onboarding_email delegates to EmailAuthService."""
+    mock_user = User(id="test", display_name="Test", primary_email="test@test.com")
+    
+    with patch(
+        "app.services.auth_service.EmailAuthService.verify_onboarding_email",
+        new_callable=AsyncMock,
+        return_value=mock_user,
+    ) as mock_verify:
+        result = await AuthService.verify_onboarding_email(db_session, "user_id", "token")
+        
+        mock_verify.assert_called_once_with(db_session, "user_id", "token")
+        assert result == mock_user

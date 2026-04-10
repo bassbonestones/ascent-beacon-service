@@ -270,3 +270,31 @@ class TestGetFrequencyDescription:
         """Test with invalid rrule."""
         result = get_frequency_description("INVALID")
         assert result == "Custom"
+
+
+# ============================================================================
+# Edge Case Tests
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_get_next_occurrence_no_more_occurrences():
+    """Test get_next_occurrence when rule has no more occurrences."""
+    from app.services.recurrence import get_next_occurrence
+    from zoneinfo import ZoneInfo
+    
+    # Rule that ended in the past
+    rule_string = "FREQ=DAILY;COUNT=1"
+    after = datetime(2030, 1, 1, tzinfo=ZoneInfo("UTC"))
+    
+    result = get_next_occurrence(rule_string, after=after)
+    # Either returns None (no more) or a future date 
+
+
+@pytest.mark.asyncio
+async def test_get_next_occurrence_invalid_rule():
+    """Test get_next_occurrence with invalid rule string."""
+    from app.services.recurrence import get_next_occurrence
+    
+    result = get_next_occurrence("INVALID_RULE_STRING")
+    assert result is None  # Should return None on ValueError

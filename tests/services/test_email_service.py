@@ -182,3 +182,23 @@ async def test_send_verification_code_api_error():
             with patch("app.services.email_service.logger"):
                 with pytest.raises(httpx.HTTPStatusError):
                     await EmailService.send_verification_code("jeremiah.stones@gmail.com", "123456")
+
+
+@pytest.mark.asyncio
+async def test_email_service_api_error_handling():
+    """Test email service handles API errors gracefully when JSON is invalid."""
+    mock_response = MagicMock()
+    mock_response.is_success = False
+    mock_response.status_code = 500
+    mock_response.json.side_effect = ValueError("Invalid JSON")
+    mock_response.text = "Internal Server Error"
+    
+    with patch("app.services.email_service.httpx.AsyncClient") as mock_client:
+        mock_instance = AsyncMock()
+        mock_instance.post.return_value = mock_response
+        mock_instance.__aenter__.return_value = mock_instance
+        mock_instance.__aexit__.return_value = None
+        mock_client.return_value = mock_instance
+        
+        # Should not raise, just log the error
+        await EmailService.send_magic_link("test@example.com", "http://test.com")

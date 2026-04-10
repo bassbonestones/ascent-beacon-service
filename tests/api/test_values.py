@@ -1248,3 +1248,48 @@ async def test_delete_value_removes_from_list(client: AsyncClient):
     list_response = await client.get("/values")
     value_ids = [v["id"] for v in list_response.json()["values"]]
     assert value_id not in value_ids
+
+
+# ============================================================================
+# Value Weight Tests
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_value_create_revision_with_new_weight(client: AsyncClient):
+    """Test creating a new value revision with different weight."""
+    # Create value
+    create_resp = await client.post(
+        "/values",
+        json={
+            "statement": "Test value for weight update",
+            "weight_raw": 50,
+            "origin": "declared",
+        },
+    )
+    value_id = create_resp.json()["id"]
+    
+    # Create a new revision with different weight
+    response = await client.post(
+        f"/values/{value_id}/revisions",
+        json={
+            "statement": "Test value for weight update",
+            "weight_raw": 80,
+            "origin": "declared"
+        },
+    )
+    assert response.status_code in [200, 201]
+
+
+@pytest.mark.asyncio
+async def test_value_with_max_weight(client: AsyncClient):
+    """Test creating value with maximum weight."""
+    response = await client.post(
+        "/values",
+        json={
+            "statement": "Maximum weight value",
+            "weight_raw": 100,
+            "origin": "declared",
+        },
+    )
+    assert response.status_code == 201

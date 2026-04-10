@@ -743,3 +743,29 @@ async def test_get_current_user(client: AsyncClient, test_user: User):
     assert response.status_code == 200
     data = response.json()
     assert data["id"] == test_user.id
+
+
+# ============================================================================
+# Refresh Token Edge Cases
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_auth_refresh_with_malformed_token(unauthenticated_client: AsyncClient):
+    """Test refresh endpoint with malformed token."""
+    response = await unauthenticated_client.post(
+        "/auth/refresh",
+        json={"refresh_token": "not.a.valid.jwt.token"},
+    )
+    assert response.status_code in [401, 422]
+
+
+@pytest.mark.asyncio
+async def test_refresh_token_invalid(unauthenticated_client: AsyncClient):
+    """Test refresh token with invalid token."""
+    response = await unauthenticated_client.post(
+        "/auth/refresh",
+        json={"refresh_token": "invalid-token"},
+    )
+    # Should fail with 401 or similar
+    assert response.status_code in [401, 422]

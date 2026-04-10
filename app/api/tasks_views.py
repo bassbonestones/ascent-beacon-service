@@ -89,11 +89,12 @@ async def get_today_tasks(
     
     # Count stats
     pending_count = sum(1 for t in tasks if t.status == "pending")
+    start_of_day_utc = start_of_day.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
     overdue_count = sum(
         1 for t in tasks 
         if t.status == "pending" 
         and t.scheduled_at 
-        and t.scheduled_at < start_of_day
+        and t.scheduled_at < start_of_day_utc
     )
     
     # Get today's completions count

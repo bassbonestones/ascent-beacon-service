@@ -242,3 +242,48 @@ async def test_links_persist_after_get(client: AsyncClient, value_with_revision,
     assert len(data["links"]) == 1
     assert data["links"][0]["value_revision_id"] == value_revision_id
     assert Decimal(data["links"][0]["link_weight"]) == Decimal("0.8")
+
+
+# ============================================================================
+# Multiple Value Links Tests
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_set_multiple_value_links(client: AsyncClient, mock_validate_priority):
+    """Test setting multiple value links on a priority."""
+    # Create values
+    val1_resp = await client.post(
+        "/values",
+        json={"statement": "Link Value 1", "weight_raw": 50, "origin": "declared"},
+    )
+    val2_resp = await client.post(
+        "/values",
+        json={"statement": "Link Value 2", "weight_raw": 40, "origin": "declared"},
+    )
+    val1_rev_id = val1_resp.json()["active_revision_id"]
+    val2_rev_id = val2_resp.json()["active_revision_id"]
+    
+    # Create priority
+    priority_resp = await client.post(
+        "/priorities",
+        json={
+            "title": "Multi Link Priority",
+            "why_matters": "Testing multiple value links",
+            "score": 4,
+        },
+    )
+    priority_rev_id = priority_resp.json()["active_revision_id"]
+    
+    # Set multiple links
+    response = await client.put(
+        f"/priority-revisions/{priority_rev_id}/links",
+        json={
+            "links": [
+                {"value_revision_id": val1_rev_id, "link_weight": "0.6"},
+                {"value_revision_id": val2_rev_id, "link_weight": "0.4"},
+            ]
+        },
+    )
+    assert response.status_code == 200
+    assert len(response.json()["links"]) == 2
