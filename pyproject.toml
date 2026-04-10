@@ -30,7 +30,7 @@ ignore_missing_imports = true
 source = ["app"]
 omit = ["app/__init__.py", "*/tests/*"]
 branch = true
-parallel = true
+concurrency = ["greenlet"]
 
 [tool.coverage.report]
 exclude_lines = [

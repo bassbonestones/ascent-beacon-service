@@ -5,6 +5,7 @@ These functions extract complex logic from occurrence_ordering.py for easier uni
 All functions are pure - no async, no DB access.
 """
 from dataclasses import dataclass
+from typing import Any
 
 
 def classify_tasks_by_recurrence(
@@ -32,7 +33,7 @@ def classify_tasks_by_recurrence(
 
 
 def find_position_in_occurrences(
-    occurrences: list,
+    occurrences: list[Any],
     task_id: str,
     occurrence_index: int,
 ) -> int:
@@ -66,9 +67,9 @@ class MergedOrderItem:
 
 
 def merge_overrides_and_preferences(
-    overrides: list,
-    prefs: list,
-) -> tuple[list[dict], set[tuple[str, int]]]:
+    overrides: list[Any],
+    prefs: list[Any],
+) -> tuple[list[dict[str, Any]], set[tuple[str, int]]]:
     """
     Merge daily overrides with permanent preferences.
     
@@ -83,7 +84,7 @@ def merge_overrides_and_preferences(
         (merged_items_as_dicts, override_keys_set)
     """
     override_keys: set[tuple[str, int]] = set()
-    items: list[dict] = []
+    items: list[dict[str, Any]] = []
     
     # Add all overrides
     for override in overrides:
@@ -110,7 +111,7 @@ def merge_overrides_and_preferences(
     return items, override_keys
 
 
-def build_task_ids_from_occurrences(occurrences: list) -> list[str]:
+def build_task_ids_from_occurrences(occurrences: list[Any]) -> list[str]:
     """Extract task IDs from occurrence objects."""
     return [occ.task_id for occ in occurrences]
 

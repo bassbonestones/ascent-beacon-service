@@ -6,6 +6,7 @@ All functions are pure - no async, no DB access.
 """
 from datetime import datetime, timezone
 from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass
@@ -62,14 +63,15 @@ def process_completion_row(
     if not scheduled_for:
         return
     
-    # Ensure timezone-aware
-    scheduled_for = ensure_timezone_aware(scheduled_for)
-    date_key = determine_date_key(scheduled_for, local_date)
+    # Ensure timezone-aware - guaranteed non-None after check above
+    scheduled_dt = ensure_timezone_aware(scheduled_for)
+    assert scheduled_dt is not None  # for mypy: we checked scheduled_for above
+    date_key = determine_date_key(scheduled_dt, local_date)
     
     if record_status == "completed":
-        _process_completion(task_id, scheduled_for, date_key, today_str, data)
+        _process_completion(task_id, scheduled_dt, date_key, today_str, data)
     else:
-        _process_skip(task_id, scheduled_for, skip_reason, date_key, today_str, data)
+        _process_skip(task_id, scheduled_dt, skip_reason, date_key, today_str, data)
 
 
 def _process_completion(
@@ -126,7 +128,7 @@ def _process_skip(
 
 
 def process_all_completion_rows(
-    rows: list[tuple],
+    rows: list[tuple[str, datetime | None, str, str | None, str | None]],
     today_str: str,
 ) -> CompletionDataMaps:
     """
@@ -161,7 +163,7 @@ def process_all_completion_rows(
     return data
 
 
-def count_task_statuses(tasks: list) -> tuple[int, int]:
+def count_task_statuses(tasks: list[Any]) -> tuple[int, int]:
     """
     Count pending and completed tasks.
     
