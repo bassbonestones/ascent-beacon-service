@@ -4138,6 +4138,7 @@ class TestTaskStatusEndpointsMocked:
         """Skipping a recurring task creates TaskCompletion record."""
         from app.api.tasks_status import skip_task
         from app.schemas.tasks import SkipTaskRequest
+        from app.services.skip_dependency_service import SkipImpactResult
         
         mock_task = Mock()
         mock_task.id = "task-123"
@@ -4151,9 +4152,14 @@ class TestTaskStatusEndpointsMocked:
         request = SkipTaskRequest(scheduled_for=datetime(2024, 1, 15, 10, 0), reason="Too busy")
         
         with patch("app.api.tasks_status.get_task_or_404") as mock_get_task, \
-             patch("app.api.tasks_status.task_to_response") as mock_to_response:
+             patch("app.api.tasks_status.task_to_response") as mock_to_response, \
+             patch(
+                 "app.api.tasks_status.evaluate_skip_hard_downstream_impact",
+                 new_callable=AsyncMock,
+             ) as mock_impact:
             mock_get_task.return_value = mock_task
             mock_to_response.return_value = Mock()
+            mock_impact.return_value = SkipImpactResult(needs_confirmation=False, affected=[])
             
             await skip_task("task-123", request, mock_user, mock_db)
             
@@ -4167,6 +4173,7 @@ class TestTaskStatusEndpointsMocked:
         """Skipping a one-time task updates task status."""
         from app.api.tasks_status import skip_task
         from app.schemas.tasks import SkipTaskRequest
+        from app.services.skip_dependency_service import SkipImpactResult
         
         mock_task = Mock()
         mock_task.id = "task-123"
@@ -4180,9 +4187,14 @@ class TestTaskStatusEndpointsMocked:
         request = SkipTaskRequest(scheduled_for=datetime(2024, 1, 15, 10, 0), reason="Changed plans")
         
         with patch("app.api.tasks_status.get_task_or_404") as mock_get_task, \
-             patch("app.api.tasks_status.task_to_response") as mock_to_response:
+             patch("app.api.tasks_status.task_to_response") as mock_to_response, \
+             patch(
+                 "app.api.tasks_status.evaluate_skip_hard_downstream_impact",
+                 new_callable=AsyncMock,
+             ) as mock_impact:
             mock_get_task.return_value = mock_task
             mock_to_response.return_value = Mock()
+            mock_impact.return_value = SkipImpactResult(needs_confirmation=False, affected=[])
             
             await skip_task("task-123", request, mock_user, mock_db)
             
@@ -4195,6 +4207,7 @@ class TestTaskStatusEndpointsMocked:
         """Skipping a non-pending task raises error."""
         from app.api.tasks_status import skip_task
         from app.schemas.tasks import SkipTaskRequest
+        from app.services.skip_dependency_service import SkipImpactResult
         from fastapi import HTTPException
         
         mock_task = Mock()
@@ -4208,8 +4221,13 @@ class TestTaskStatusEndpointsMocked:
         
         request = SkipTaskRequest(scheduled_for=datetime(2024, 1, 15, 10, 0))
         
-        with patch("app.api.tasks_status.get_task_or_404") as mock_get_task:
+        with patch("app.api.tasks_status.get_task_or_404") as mock_get_task, \
+             patch(
+                 "app.api.tasks_status.evaluate_skip_hard_downstream_impact",
+                 new_callable=AsyncMock,
+             ) as mock_impact:
             mock_get_task.return_value = mock_task
+            mock_impact.return_value = SkipImpactResult(needs_confirmation=False, affected=[])
             
             with pytest.raises(HTTPException) as exc_info:
                 await skip_task("task-123", request, mock_user, mock_db)

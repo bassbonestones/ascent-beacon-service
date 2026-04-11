@@ -278,6 +278,49 @@ class SkipTaskRequest(BaseModel):
         default=None,
         description="Client's local date (YYYY-MM-DD) for this occurrence"
     )
+    confirm_proceed: bool = Field(
+        default=False,
+        description="Phase 4i-4: If True, skip even when hard downstream would be affected (keep affected pending)",
+    )
+
+
+class AffectedDownstreamEntry(BaseModel):
+    """Downstream task impacted by skipping an upstream occurrence (Phase 4i-4)."""
+
+    task_id: str
+    task_title: str
+    rule_id: str
+    strength: str = Field(description="'hard' or 'soft'")
+    affected_occurrences: int = Field(
+        default=1,
+        ge=1,
+        description="Estimated occurrences for recurring downstream (UI preview)",
+    )
+
+
+class SkipTaskPreviewResponse(BaseModel):
+    """Skip blocked until user confirms (hard downstream rules)."""
+
+    status: Literal["has_dependents"] = "has_dependents"
+    affected_downstream: list[AffectedDownstreamEntry]
+
+
+class SkipChainTaskRequest(BaseModel):
+    """Request to skip a task and cascade skip to hard dependents (Phase 4i-4)."""
+
+    reason: str | None = Field(default=None, max_length=500, description="Reason applied to all skipped tasks")
+    scheduled_for: datetime | None = Field(
+        default=None,
+        description="For recurring tasks: occurrence context for the root skip",
+    )
+    local_date: str | None = Field(
+        default=None,
+        description="Client's local date (YYYY-MM-DD) for this occurrence",
+    )
+    cascade_skip: bool = Field(
+        default=False,
+        description="Must be True to perform cascade (safety latch)",
+    )
 
 
 class ReopenTaskRequest(BaseModel):

@@ -11,17 +11,19 @@ from fastapi.responses import JSONResponse
 from starlette.responses import Response
 from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
-
 from app.core.auth import CurrentUser
 from app.core.db import get_db
 from app.core.time import utc_now
 from app.models.dependency import DependencyRule
+from app.models.task import Task
 from app.models.task_completion import TaskCompletion
 from app.schemas.dependency import DependencyBlockedResponse, DependencyStatusResponse
 from app.schemas.tasks import (
+    AffectedDownstreamEntry,
     CompleteTaskRequest,
     ReopenTaskRequest,
+    SkipChainTaskRequest,
+    SkipTaskPreviewResponse,
     SkipTaskRequest,
     TaskResponse,
 )
@@ -34,11 +36,45 @@ from app.api.helpers.task_helpers import (
 )
 from app.services.dependency_service import (
     check_dependencies,
-    record_resolutions,
     get_qualifying_upstream_ids,
+    record_resolutions,
+)
+from app.services.skip_dependency_service import (
+    evaluate_skip_hard_downstream_impact,
+    get_transitive_hard_dependents_toposort,
 )
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
+
+
+async def _persist_task_skip(
+    db: AsyncSession,
+    task: Task,
+    reason: str | None,
+    scheduled_for: datetime | None,
+    local_date: str | None,
+) -> None:
+    """Record skip for one task (recurring: TaskCompletion row; one-time: task row)."""
+    if task.is_recurring:
+        completion = TaskCompletion(
+            task_id=task.id,
+            status="skipped",
+            skip_reason=reason,
+            completed_at=utc_now(),
+            scheduled_for=scheduled_for,
+            local_date=local_date,
+        )
+        db.add(completion)
+        return
+    if task.status != "pending":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Can only skip pending tasks",
+        )
+    task.status = "skipped"
+    task.skip_reason = reason
+    task.updated_at = utc_now()
+    await clear_sort_order_for_completed(db, task)
 
 
 @router.post(
@@ -177,7 +213,7 @@ async def complete_task(
 
 @router.post(
     "/{task_id}/skip",
-    response_model=TaskResponse,
+    response_model=TaskResponse | SkipTaskPreviewResponse,
     summary="Skip task",
 )
 async def skip_task(
@@ -185,47 +221,109 @@ async def skip_task(
     request: SkipTaskRequest,
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
-) -> TaskResponse:
+) -> TaskResponse | SkipTaskPreviewResponse:
     """
     Skip a task occurrence.
-    
+
     For recurring tasks: records a skip but keeps task pending.
     For one-time tasks: sets status to 'skipped'.
     For anytime tasks: also clears sort_order and shifts others down.
+
+    Phase 4i-4: If hard downstream rules require confirmation, returns
+    `status: has_dependents` without persisting until `confirm_proceed=true`.
     """
     task = await get_task_or_404(db, task_id, user.id)
-    
-    if task.is_recurring:
-        # Record skip for this occurrence
-        completion = TaskCompletion(
-            task_id=task.id,
-            status="skipped",
-            skip_reason=request.reason,
-            completed_at=utc_now(),
-            scheduled_for=request.scheduled_for,
-            local_date=request.local_date,
+
+    impact = await evaluate_skip_hard_downstream_impact(
+        db, task_id, user.id, request.scheduled_for
+    )
+    if impact.needs_confirmation and not request.confirm_proceed:
+        return SkipTaskPreviewResponse(
+            affected_downstream=[
+                AffectedDownstreamEntry(
+                    task_id=row["task_id"],
+                    task_title=row["task_title"],
+                    rule_id=row["rule_id"],
+                    strength=row["strength"],
+                    affected_occurrences=row["affected_occurrences"],
+                )
+                for row in impact.affected
+            ],
         )
-        db.add(completion)
-        # Task stays pending for next occurrence
-    else:
-        # One-time task: check if pending before skipping
-        if task.status != "pending":
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Can only skip pending tasks",
-            )
-        # One-time task: mark as skipped
-        task.status = "skipped"
-        task.skip_reason = request.reason
-        task.updated_at = utc_now()
-        
-        # Phase 4e: Clear sort_order for skipped anytime tasks
-        await clear_sort_order_for_completed(db, task)
-    
+
+    await _persist_task_skip(
+        db,
+        task,
+        request.reason,
+        request.scheduled_for,
+        request.local_date,
+    )
+
     await db.commit()
     task = await get_task_or_404(db, task.id, user.id)
-    # For recurring tasks, mark as skipped for today
     return task_to_response(task, skipped_for_today=task.is_recurring)
+
+
+@router.post(
+    "/{task_id}/skip-chain",
+    response_model=list[TaskResponse],
+    summary="Skip task and cascade skip to hard dependents",
+)
+async def skip_task_chain(
+    task_id: str,
+    request: SkipChainTaskRequest,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> list[TaskResponse]:
+    """
+    Skip this task then skip all transitive hard dependents in topological order.
+
+    Requires `cascade_skip=true`. Does not return the has_dependents preview;
+    the client should use that flow on POST /skip before calling this endpoint.
+    """
+    if not request.cascade_skip:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="cascade_skip must be true to perform cascade skip",
+        )
+
+    root = await get_task_or_404(db, task_id, user.id)
+    dependent_ids = await get_transitive_hard_dependents_toposort(db, task_id, user.id)
+
+    out: list[TaskResponse] = []
+
+    await _persist_task_skip(
+        db,
+        root,
+        request.reason,
+        request.scheduled_for,
+        request.local_date,
+    )
+    await db.flush()
+    out.append(
+        task_to_response(
+            await get_task_or_404(db, root.id, user.id),
+            skipped_for_today=root.is_recurring,
+        )
+    )
+
+    for dep_id in dependent_ids:
+        dep_task = await get_task_or_404(db, dep_id, user.id)
+        await _persist_task_skip(
+            db,
+            dep_task,
+            request.reason,
+            request.scheduled_for,
+            request.local_date,
+        )
+        await db.flush()
+        refreshed = await get_task_or_404(db, dep_task.id, user.id)
+        out.append(
+            task_to_response(refreshed, skipped_for_today=refreshed.is_recurring)
+        )
+
+    await db.commit()
+    return out
 
 
 @router.post(
