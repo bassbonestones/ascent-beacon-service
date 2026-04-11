@@ -253,6 +253,17 @@ class CompleteTaskRequest(BaseModel):
         default=None,
         description="Client's local date (YYYY-MM-DD) for this occurrence"
     )
+    
+    # Phase 4i: Dependency override fields
+    override_confirm: bool = Field(
+        default=False,
+        description="If True, override unmet hard dependencies (requires override_reason)"
+    )
+    override_reason: str | None = Field(
+        default=None,
+        max_length=500,
+        description="Required when overriding unmet hard dependencies"
+    )
 
 
 class SkipTaskRequest(BaseModel):

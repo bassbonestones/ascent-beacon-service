@@ -273,3 +273,24 @@ class DependencyStateCacheResponse(BaseModel):
     cached_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# ============================================================================
+# Dependency Blocked Response (for 409 Conflict)
+# ============================================================================
+
+
+class DependencyBlockedResponse(BaseModel):
+    """
+    Response when a task completion is blocked by unmet hard dependencies.
+    
+    Returned with HTTP 409 when attempting to complete a task with
+    unmet hard dependencies without providing override confirmation.
+    """
+
+    message: str = "Cannot complete task due to unmet hard dependencies"
+    task_id: str
+    scheduled_for: datetime | None = None
+    blockers: list[DependencyBlocker]
+    can_override: bool = True  # Always true - user can override if they provide reason
+    hint: str = "Retry with override_confirm=true and override_reason to bypass"

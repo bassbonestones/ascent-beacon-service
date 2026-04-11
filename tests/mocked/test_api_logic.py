@@ -4021,6 +4021,7 @@ class TestTaskStatusEndpointsMocked:
         """Completing a recurring task creates TaskCompletion record."""
         from app.api.tasks_status import complete_task
         from app.schemas.tasks import CompleteTaskRequest
+        from app.schemas.dependency import DependencyStatusResponse
         
         mock_task = Mock()
         mock_task.id = "task-123"
@@ -4034,12 +4035,20 @@ class TestTaskStatusEndpointsMocked:
         
         request = CompleteTaskRequest(scheduled_for=datetime(2024, 1, 15, 10, 0))
         
+        # Mock empty dependency status (no deps)
+        mock_dep_status = DependencyStatusResponse(
+            task_id="task-123",
+            dependencies=[],
+        )
+        
         with patch("app.api.tasks_status.get_task_or_404") as mock_get_task, \
              patch("app.api.tasks_status.task_to_response") as mock_to_response, \
-             patch("app.api.tasks_status.update_goal_progress") as mock_update_goal:
+             patch("app.api.tasks_status.update_goal_progress") as mock_update_goal, \
+             patch("app.api.tasks_status.check_dependencies") as mock_check_deps:
             mock_get_task.return_value = mock_task
             mock_to_response.return_value = Mock()
             mock_update_goal.return_value = None
+            mock_check_deps.return_value = mock_dep_status
             
             await complete_task("task-123", request, mock_user, mock_db)
             
@@ -4053,6 +4062,7 @@ class TestTaskStatusEndpointsMocked:
         """Completing a one-time task updates task status."""
         from app.api.tasks_status import complete_task
         from app.schemas.tasks import CompleteTaskRequest
+        from app.schemas.dependency import DependencyStatusResponse
         
         mock_task = Mock()
         mock_task.id = "task-123"
@@ -4066,12 +4076,20 @@ class TestTaskStatusEndpointsMocked:
         
         request = CompleteTaskRequest(scheduled_for=datetime(2024, 1, 15, 10, 0))
         
+        # Mock empty dependency status
+        mock_dep_status = DependencyStatusResponse(
+            task_id="task-123",
+            dependencies=[],
+        )
+        
         with patch("app.api.tasks_status.get_task_or_404") as mock_get_task, \
              patch("app.api.tasks_status.task_to_response") as mock_to_response, \
-             patch("app.api.tasks_status.update_goal_progress") as mock_update_goal:
+             patch("app.api.tasks_status.update_goal_progress") as mock_update_goal, \
+             patch("app.api.tasks_status.check_dependencies") as mock_check_deps:
             mock_get_task.return_value = mock_task
             mock_to_response.return_value = Mock()
             mock_update_goal.return_value = None
+            mock_check_deps.return_value = mock_dep_status
             
             await complete_task("task-123", request, mock_user, mock_db)
             
@@ -4084,6 +4102,7 @@ class TestTaskStatusEndpointsMocked:
         """Completing an already completed task raises error."""
         from app.api.tasks_status import complete_task
         from app.schemas.tasks import CompleteTaskRequest
+        from app.schemas.dependency import DependencyStatusResponse
         from fastapi import HTTPException
         
         mock_task = Mock()
@@ -4097,8 +4116,16 @@ class TestTaskStatusEndpointsMocked:
         
         request = CompleteTaskRequest(scheduled_for=datetime(2024, 1, 15, 10, 0))
         
-        with patch("app.api.tasks_status.get_task_or_404") as mock_get_task:
+        # Mock empty dependency status
+        mock_dep_status = DependencyStatusResponse(
+            task_id="task-123",
+            dependencies=[],
+        )
+        
+        with patch("app.api.tasks_status.get_task_or_404") as mock_get_task, \
+             patch("app.api.tasks_status.check_dependencies") as mock_check_deps:
             mock_get_task.return_value = mock_task
+            mock_check_deps.return_value = mock_dep_status
             
             with pytest.raises(HTTPException) as exc_info:
                 await complete_task("task-123", request, mock_user, mock_db)

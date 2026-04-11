@@ -31,6 +31,11 @@ from app.api.helpers.dependency_helpers import (
 router = APIRouter(prefix="/dependencies", tags=["dependencies"])
 
 
+def normalize_uuid(uuid_str: str | None) -> str | None:
+    """Normalize UUID by removing hyphens for consistent comparison."""
+    return uuid_str.replace("-", "") if uuid_str else None
+
+
 @router.post(
     "",
     response_model=DependencyRuleResponse,
@@ -100,6 +105,11 @@ async def list_dependency_rules(
     ),
 ) -> DependencyRuleListResponse:
     """Get all dependency rules, optionally filtered by task."""
+    # Normalize UUIDs for consistent comparison
+    norm_upstream = normalize_uuid(upstream_task_id)
+    norm_downstream = normalize_uuid(downstream_task_id)
+    norm_task = normalize_uuid(task_id)
+
     stmt = (
         select(DependencyRule)
         .options(
@@ -109,17 +119,17 @@ async def list_dependency_rules(
         .where(DependencyRule.user_id == user.id)
     )
 
-    if upstream_task_id:
-        stmt = stmt.where(DependencyRule.upstream_task_id == upstream_task_id)
+    if norm_upstream:
+        stmt = stmt.where(DependencyRule.upstream_task_id == norm_upstream)
 
-    if downstream_task_id:
-        stmt = stmt.where(DependencyRule.downstream_task_id == downstream_task_id)
+    if norm_downstream:
+        stmt = stmt.where(DependencyRule.downstream_task_id == norm_downstream)
 
-    if task_id:
+    if norm_task:
         # Match either upstream or downstream
         stmt = stmt.where(
-            (DependencyRule.upstream_task_id == task_id)
-            | (DependencyRule.downstream_task_id == task_id)
+            (DependencyRule.upstream_task_id == norm_task)
+            | (DependencyRule.downstream_task_id == norm_task)
         )
 
     stmt = stmt.order_by(DependencyRule.created_at.desc())
