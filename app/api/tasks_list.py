@@ -186,6 +186,7 @@ async def list_tasks(
                 TaskCompletion.status,
                 TaskCompletion.skip_reason,
                 TaskCompletion.local_date,
+                TaskCompletion.completed_at,
             )
             .where(
                 and_(
@@ -218,56 +219,69 @@ async def list_tasks(
             record_status = row[2]  # "completed" or "skipped"
             skip_reason = row[3]  # skip reason (null for completions)
             local_date = row[4]  # client's local date (YYYY-MM-DD)
-            
+            completed_at = row[5]
+
+            if not local_date and not scheduled_for and not completed_at:
+                continue
+
+            if local_date:
+                date_key = local_date
+            elif scheduled_for:
+                sf = scheduled_for
+                if sf.tzinfo is None:
+                    sf = sf.replace(tzinfo=timezone.utc)
+                date_key = sf.strftime("%Y-%m-%d")
+            else:
+                ca = completed_at
+                if ca is None:
+                    continue
+                if ca.tzinfo is None:
+                    ca = ca.replace(tzinfo=timezone.utc)
+                date_key = ca.strftime("%Y-%m-%d")
+
             if scheduled_for:
-                # Ensure scheduled_for is timezone-aware for comparison
-                if scheduled_for.tzinfo is None:
-                    scheduled_for = scheduled_for.replace(tzinfo=timezone.utc)
-                
-                # Use local_date as the date key if available (for timezone correctness)
-                # Fall back to UTC date from scheduled_for for backward compatibility
-                if local_date:
-                    date_key = local_date
-                else:
-                    date_key = scheduled_for.strftime("%Y-%m-%d")
-                
-                if record_status == "completed":
-                    # Track completions
-                    if task_id not in completions_by_date_map:
-                        completions_by_date_map[task_id] = {}
-                    if date_key not in completions_by_date_map[task_id]:
-                        completions_by_date_map[task_id][date_key] = []
-                    completions_by_date_map[task_id][date_key].append(scheduled_for.isoformat())
-                    
-                    # Track today-specific counts
-                    if date_key == today_str:
-                        completions_today_count[task_id] = completions_today_count.get(task_id, 0) + 1
-                        if task_id not in completions_today_times:
-                            completions_today_times[task_id] = []
-                        completions_today_times[task_id].append(scheduled_for.isoformat())
-                else:
-                    # Track skips
-                    if task_id not in skips_by_date_map:
-                        skips_by_date_map[task_id] = {}
-                    if date_key not in skips_by_date_map[task_id]:
-                        skips_by_date_map[task_id][date_key] = []
-                    skips_by_date_map[task_id][date_key].append(scheduled_for.isoformat())
-                    
-                    # Track skip reasons by date
-                    if task_id not in skip_reasons_by_date_map:
-                        skip_reasons_by_date_map[task_id] = {}
-                    # Store the most recent skip reason for this date
-                    skip_reasons_by_date_map[task_id][date_key] = skip_reason
-                    
-                    # Track today-specific skip counts
-                    if date_key == today_str:
-                        skips_today_count[task_id] = skips_today_count.get(task_id, 0) + 1
-                        if task_id not in skips_today_times:
-                            skips_today_times[task_id] = []
-                        skips_today_times[task_id].append(scheduled_for.isoformat())
-                        # Store the most recent skip reason for today
-                        skip_reason_today_map[task_id] = skip_reason
-    
+                sf = scheduled_for
+                if sf.tzinfo is None:
+                    sf = sf.replace(tzinfo=timezone.utc)
+                ts_iso = sf.isoformat()
+            elif completed_at:
+                ca = completed_at
+                if ca.tzinfo is None:
+                    ca = ca.replace(tzinfo=timezone.utc)
+                ts_iso = ca.isoformat()
+            else:
+                ts_iso = f"{date_key}T12:00:00+00:00"
+
+            if record_status == "completed":
+                if task_id not in completions_by_date_map:
+                    completions_by_date_map[task_id] = {}
+                if date_key not in completions_by_date_map[task_id]:
+                    completions_by_date_map[task_id][date_key] = []
+                completions_by_date_map[task_id][date_key].append(ts_iso)
+
+                if date_key == today_str:
+                    completions_today_count[task_id] = completions_today_count.get(task_id, 0) + 1
+                    if task_id not in completions_today_times:
+                        completions_today_times[task_id] = []
+                    completions_today_times[task_id].append(ts_iso)
+            else:
+                if task_id not in skips_by_date_map:
+                    skips_by_date_map[task_id] = {}
+                if date_key not in skips_by_date_map[task_id]:
+                    skips_by_date_map[task_id][date_key] = []
+                skips_by_date_map[task_id][date_key].append(ts_iso)
+
+                if task_id not in skip_reasons_by_date_map:
+                    skip_reasons_by_date_map[task_id] = {}
+                skip_reasons_by_date_map[task_id][date_key] = skip_reason
+
+                if date_key == today_str:
+                    skips_today_count[task_id] = skips_today_count.get(task_id, 0) + 1
+                    if task_id not in skips_today_times:
+                        skips_today_times[task_id] = []
+                    skips_today_times[task_id].append(ts_iso)
+                    skip_reason_today_map[task_id] = skip_reason
+
     # Count stats
     pending_count = sum(1 for t in tasks if t.status == "pending")
     completed_count = sum(1 for t in tasks if t.status == "completed")
