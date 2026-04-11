@@ -397,7 +397,9 @@ class TestCountQualifyingCompletions:
         
         mock_db = AsyncMock()
         
-        result = await _count_qualifying_completions(mock_db, mock_rule, None)
+        result = await _count_qualifying_completions(
+            mock_db, mock_rule, None, completion_statuses=("completed",)
+        )
         assert result == 0
 
 
@@ -412,7 +414,9 @@ class TestResolveWithinWindow:
         mock_rule = MagicMock()
         mock_db = AsyncMock()
         
-        result = await _resolve_within_window(mock_db, mock_rule, None)
+        result = await _resolve_within_window(
+            mock_db, mock_rule, None, completion_statuses=("completed",)
+        )
         assert result == 0
 
 
@@ -515,5 +519,7 @@ class TestResolveWithinWindowEdgeCases:
         
         scheduled_for = datetime.now()
         
-        result = await _resolve_within_window(mock_db, mock_rule, scheduled_for)
+        result = await _resolve_within_window(
+            mock_db, mock_rule, scheduled_for, completion_statuses=("completed",)
+        )
         assert result == 0

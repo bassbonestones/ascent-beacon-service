@@ -50,3 +50,22 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```bash
 pytest
 ```
+
+### Full test suite with coverage (JSON + terminal)
+
+Run with the shell **current working directory** set to **`ascent-beacon-service`** (required by `tests/conftest.py`). From the monorepo root: `cd ascent-beacon-service`.
+
+**One command** (writes `coverage.json` in the service directory, then prints total percent from JSON):
+
+```bash
+python -m pytest tests/ -v --cov=app --cov-report=json --cov-report=term-missing && python3 -c "import json; d=json.load(open('coverage.json')); print(f\"Coverage: {d['totals']['percent_covered']:.2f}%\")"
+```
+
+**Two-step** (same run, print percent from stdin):
+
+```bash
+python -m pytest tests/ -v --cov=app --cov-report=json --cov-report=term-missing
+cat coverage.json | python3 -c "import json,sys; d=json.load(sys.stdin); print(f\"{d['totals']['percent_covered']:.2f}%\")"
+```
+
+The ratchet in `architecture/maturity-framework.md` also references `coverage report --precision=2` after `pytest --cov=app`; if those two totals ever disagree, use the documented gate command for the official floor.

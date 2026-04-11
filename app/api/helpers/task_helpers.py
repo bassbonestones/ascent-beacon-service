@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models import Task, Goal
-from app.schemas.tasks import TaskResponse, GoalInfo
+from app.schemas.tasks import GoalInfo, TaskDependencySummary, TaskResponse
 
 
 async def get_task_or_404(
@@ -50,6 +50,7 @@ def task_to_response(
     skips_by_date: dict[str, list[str]] | None = None,
     skip_reason_today: str | None = None,
     skip_reasons_by_date: dict[str, str | None] | None = None,
+    dependency_summary: TaskDependencySummary | None = None,
 ) -> TaskResponse:
     """Convert Task model to response schema.
     
@@ -109,6 +110,7 @@ def task_to_response(
         skips_by_date=skips_by_date or {} if task.is_recurring else {},
         skip_reason_today=skip_reason_today if task.is_recurring else None,
         skip_reasons_by_date=skip_reasons_by_date or {} if task.is_recurring else {},
+        dependency_summary=dependency_summary,
     )
 
 

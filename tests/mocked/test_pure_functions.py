@@ -1233,6 +1233,15 @@ class TestModelReprMethods:
         result = repr(completion)
         assert isinstance(result, str)
 
+    def test_task_completion_is_skipped_property(self) -> None:
+        """TaskCompletion.is_skipped reflects skipped status."""
+        from app.models.task_completion import TaskCompletion
+
+        completion = TaskCompletion()
+        completion.status = "skipped"
+        assert completion.is_skipped is True
+        assert completion.is_completed is False
+
     def test_dependency_rule_repr(self):
         """DependencyRule __repr__ returns string."""
         from app.models.dependency import DependencyRule

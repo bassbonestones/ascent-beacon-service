@@ -7,7 +7,7 @@ Note: list_tasks is in tasks_list.py due to completion tracking complexity.
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import CurrentUser
@@ -117,10 +117,24 @@ async def get_task(
     task_id: str,
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
+    include_dependency_summary: bool = Query(
+        default=False,
+        description="When true with client_today, include dependency_summary for this task",
+    ),
+    client_today: str | None = Query(
+        default=None,
+        description="Client local date YYYY-MM-DD for dependency_summary context",
+    ),
 ) -> TaskResponse:
     """Get a task by ID."""
     task = await get_task_or_404(db, task_id, user.id)
-    return task_to_response(task)
+    dep_summary = None
+    if include_dependency_summary and client_today:
+        from app.services.task_dependency_summary import build_summaries_for_tasks
+
+        summaries = await build_summaries_for_tasks(db, user.id, [task], client_today)
+        dep_summary = summaries.get(task.id)
+    return task_to_response(task, dependency_summary=dep_summary)
 
 
 @router.patch("/{task_id}", response_model=TaskResponse, summary="Update task")

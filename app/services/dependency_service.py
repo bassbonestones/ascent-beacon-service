@@ -7,8 +7,9 @@ Core logic for determining if a task's dependencies are met.
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select, and_, func
+from sqlalchemy import select, and_, delete, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql import ColumnElement, Select
 from sqlalchemy.orm import selectinload
 
 from app.core.time import utc_now
@@ -25,6 +26,47 @@ from app.schemas.dependency import (
 
 # Maximum chain depth for transitive resolution (prevents pathological DAGs)
 MAX_CHAIN_DEPTH = 50
+
+# Upstream TaskCompletion statuses counted toward ``is_met`` / resolution consumption.
+_COMPLETED_ONLY: tuple[str, ...] = ("completed",)
+_HARD_INCLUDING_SKIPPED: tuple[str, ...] = ("completed", "skipped")
+
+
+def _select_consumed_upstream_completion_ids(rule_id: str) -> Select[Any]:
+    """
+    Upstream completion IDs that are still ``consumed`` for this rule.
+
+    Joins to ``TaskCompletion`` so rows whose downstream completion was removed
+    (e.g. one-time reopen bulk-delete) no longer suppress upstream skips.
+    """
+    return (
+        select(DependencyResolution.upstream_completion_id)
+        .join(
+            TaskCompletion,
+            TaskCompletion.id == DependencyResolution.downstream_completion_id,
+        )
+        .where(
+            DependencyResolution.dependency_rule_id == rule_id,
+            DependencyResolution.upstream_completion_id.isnot(None),
+        )
+    )
+
+
+def _upstream_occurrence_on_or_before_anchor(
+    anchor_time: datetime,
+) -> ColumnElement[bool]:
+    """
+    Occurrence identity for next_occurrence deps: prefer scheduled slot vs wall time.
+
+    Without this, a skip logged later the same day (completed_at after the downstream
+    occurrence anchor) is wrongly ignored when scheduled_for is on/before that anchor.
+    """
+    return or_(
+        (TaskCompletion.scheduled_for.is_not(None))
+        & (TaskCompletion.scheduled_for <= anchor_time),
+        TaskCompletion.scheduled_for.is_(None)
+        & (TaskCompletion.completed_at <= anchor_time),
+    )
 
 
 async def get_upstream_recurrence_interval_minutes(task: Task) -> int:
@@ -79,11 +121,16 @@ async def check_dependencies(
     blockers: list[DependencyBlocker] = []
     
     for rule in rules:
-        # Count qualifying upstream completions based on scope
-        completed_count = await _count_qualifying_completions(
-            db, rule, scheduled_for
+        statuses = (
+            _HARD_INCLUDING_SKIPPED
+            if rule.strength == "hard"
+            else _COMPLETED_ONLY
         )
-        
+        # Count qualifying upstream completions (hard: skip counts; soft: complete only)
+        completed_count = await _count_qualifying_completions(
+            db, rule, scheduled_for, completion_statuses=statuses
+        )
+
         is_met = completed_count >= rule.required_occurrence_count
         
         upstream_info = TaskInfo(
@@ -137,25 +184,77 @@ async def check_dependencies(
     )
 
 
+async def get_transitive_unmet_hard_prerequisites(
+    db: AsyncSession,
+    task_id: str,
+    user_id: str,
+    scheduled_for: datetime | None = None,
+    depth: int = 0,
+    visited: set[str] | None = None,
+) -> list[DependencyBlocker]:
+    """
+    Unmet hard dependency chain in topological order (deepest prerequisite first).
+
+    Matches completion-chain ordering so the UI can list the full prerequisite chain,
+    not only direct edges on the target task.
+    """
+    if depth >= MAX_CHAIN_DEPTH:
+        raise ValueError(f"Dependency chain exceeds maximum depth of {MAX_CHAIN_DEPTH}")
+    if visited is None:
+        visited = set()
+    if task_id in visited:
+        return []
+    visited.add(task_id)
+
+    status = await check_dependencies(db, task_id, user_id, scheduled_for)
+    result: list[DependencyBlocker] = []
+
+    for blocker in status.dependencies:
+        if blocker.strength != "hard" or blocker.is_met:
+            continue
+        upstream_blockers = await get_transitive_unmet_hard_prerequisites(
+            db,
+            blocker.upstream_task.id,
+            user_id,
+            scheduled_for,
+            depth + 1,
+            visited,
+        )
+        result.extend(upstream_blockers)
+        result.append(blocker)
+
+    return result
+
+
 async def _count_qualifying_completions(
     db: AsyncSession,
     rule: DependencyRule,
     downstream_scheduled_for: datetime | None,
+    *,
+    completion_statuses: tuple[str, ...],
 ) -> int:
     """
-    Count upstream completions that qualify for this dependency rule.
-    
+    Count upstream TaskCompletion rows that qualify for this dependency rule.
+
+    For **hard** rules, ``completion_statuses`` includes ``skipped`` so downstream
+    can complete after skipping upstream with keep-pending. **Soft** rules use
+    completed-only so list advisories still reflect a skipped upstream.
+
     Uses scope-specific logic:
     - all_occurrences: any completion, not already consumed
     - next_occurrence: most recent unconsumed completion
     - within_window: completions within validity window
     """
     if rule.scope == "all_occurrences":
-        return await _resolve_all_occurrences(db, rule)
+        return await _resolve_all_occurrences(db, rule, completion_statuses)
     elif rule.scope == "next_occurrence":
-        return await _resolve_next_occurrence(db, rule, downstream_scheduled_for)
+        return await _resolve_next_occurrence(
+            db, rule, downstream_scheduled_for, completion_statuses
+        )
     elif rule.scope == "within_window":
-        return await _resolve_within_window(db, rule, downstream_scheduled_for)
+        return await _resolve_within_window(
+            db, rule, downstream_scheduled_for, completion_statuses
+        )
     else:
         return 0
 
@@ -163,6 +262,7 @@ async def _count_qualifying_completions(
 async def _resolve_all_occurrences(
     db: AsyncSession,
     rule: DependencyRule,
+    completion_statuses: tuple[str, ...],
 ) -> int:
     """
     Count all completed upstream occurrences (not consumed for this rule).
@@ -175,24 +275,16 @@ async def _resolve_all_occurrences(
         select(TaskCompletion)
         .where(
             TaskCompletion.task_id == rule.upstream_task_id,
-            TaskCompletion.status == "completed",
+            TaskCompletion.status.in_(completion_statuses),
         )
     )
     result = await db.execute(completions_stmt)
     all_completions = result.scalars().all()
-    
-    # Find completions already consumed for this rule
-    consumed_stmt = (
-        select(DependencyResolution.upstream_completion_id)
-        .where(
-            DependencyResolution.dependency_rule_id == rule.id,
-            DependencyResolution.upstream_completion_id.isnot(None),
-        )
-    )
-    consumed_result = await db.execute(consumed_stmt)
+
+    consumed_result = await db.execute(_select_consumed_upstream_completion_ids(rule.id))
     consumed_ids = set(consumed_result.scalars().all())
-    
-    # Count unconsumed completions
+
+    # Count unconsumed completions/skips
     return sum(1 for c in all_completions if c.id not in consumed_ids)
 
 
@@ -200,6 +292,7 @@ async def _resolve_next_occurrence(
     db: AsyncSession,
     rule: DependencyRule,
     downstream_scheduled_for: datetime | None,
+    completion_statuses: tuple[str, ...],
 ) -> int:
     """
     Check if there's an unconsumed upstream completion for NEXT_OCCURRENCE scope.
@@ -220,33 +313,28 @@ async def _resolve_next_occurrence(
         select(TaskCompletion)
         .where(
             TaskCompletion.task_id == rule.upstream_task_id,
-            TaskCompletion.status == "completed",
-            TaskCompletion.completed_at <= anchor_time,
+            TaskCompletion.status.in_(completion_statuses),
+            _upstream_occurrence_on_or_before_anchor(anchor_time),
         )
-        .order_by(TaskCompletion.completed_at.desc())
+        .order_by(
+            TaskCompletion.scheduled_for.desc().nulls_last(),
+            TaskCompletion.completed_at.desc(),
+        )
     )
     result = await db.execute(completions_stmt)
     completions = result.scalars().all()
     
-    # Find consumed completions for this rule
-    consumed_stmt = (
-        select(DependencyResolution.upstream_completion_id)
-        .where(
-            DependencyResolution.dependency_rule_id == rule.id,
-            DependencyResolution.upstream_completion_id.isnot(None),
-        )
-    )
-    consumed_result = await db.execute(consumed_stmt)
+    consumed_result = await db.execute(_select_consumed_upstream_completion_ids(rule.id))
     consumed_ids = set(consumed_result.scalars().all())
-    
-    # Count unconsumed completions (up to required count)
+
+    # Count unconsumed completions/skips (up to required count)
     count = 0
     for completion in completions:
         if completion.id not in consumed_ids:
             count += 1
             if count >= rule.required_occurrence_count:
                 break
-    
+
     return count
 
 
@@ -254,6 +342,7 @@ async def _resolve_within_window(
     db: AsyncSession,
     rule: DependencyRule,
     downstream_scheduled_for: datetime | None,
+    completion_statuses: tuple[str, ...],
 ) -> int:
     """
     Count upstream completions within the validity window.
@@ -282,7 +371,7 @@ async def _resolve_within_window(
         select(TaskCompletion)
         .where(
             TaskCompletion.task_id == rule.upstream_task_id,
-            TaskCompletion.status == "completed",
+            TaskCompletion.status.in_(completion_statuses),
             TaskCompletion.completed_at >= window_start,
             TaskCompletion.completed_at < downstream_scheduled_for,
         )
@@ -291,18 +380,10 @@ async def _resolve_within_window(
     result = await db.execute(completions_stmt)
     completions = result.scalars().all()
     
-    # Find consumed completions for this rule
-    consumed_stmt = (
-        select(DependencyResolution.upstream_completion_id)
-        .where(
-            DependencyResolution.dependency_rule_id == rule.id,
-            DependencyResolution.upstream_completion_id.isnot(None),
-        )
-    )
-    consumed_result = await db.execute(consumed_stmt)
+    consumed_result = await db.execute(_select_consumed_upstream_completion_ids(rule.id))
     consumed_ids = set(consumed_result.scalars().all())
-    
-    # Count unconsumed completions
+
+    # Count unconsumed completions/skips
     return sum(1 for c in completions if c.id not in consumed_ids)
 
 
@@ -327,8 +408,22 @@ async def record_resolutions(
     Returns:
         List of created DependencyResolution records
     """
+    # Re-open can delete downstream TaskCompletion rows without removing dependency_resolutions
+    # (e.g. SQLite without FK enforcement). Stale rows still hit the partial unique index on
+    # (dependency_rule_id, upstream_completion_id) and block re-inserting the same consumption.
+    for blocker in blockers:
+        for uid in upstream_completion_ids.get(blocker.rule_id, []):
+            await db.execute(
+                delete(DependencyResolution).where(
+                    and_(
+                        DependencyResolution.dependency_rule_id == blocker.rule_id,
+                        DependencyResolution.upstream_completion_id == uid,
+                    )
+                )
+            )
+
     resolutions: list[DependencyResolution] = []
-    
+
     for blocker in blockers:
         upstream_ids = upstream_completion_ids.get(blocker.rule_id, [])
         
@@ -429,11 +524,18 @@ async def get_qualifying_upstream_ids(
     
     Returns up to required_count IDs, ordered by most recent first.
     """
+    statuses = (
+        _HARD_INCLUDING_SKIPPED
+        if rule.strength == "hard"
+        else _COMPLETED_ONLY
+    )
     if rule.scope == "all_occurrences":
-        completions = await _get_unconsumed_completions(db, rule, None, None)
+        completions = await _get_unconsumed_completions(
+            db, rule, None, None, statuses
+        )
     elif rule.scope == "next_occurrence":
         completions = await _get_unconsumed_completions(
-            db, rule, None, downstream_scheduled_for
+            db, rule, None, downstream_scheduled_for, statuses
         )
     elif rule.scope == "within_window":
         window_minutes = rule.validity_window_minutes or 1440
@@ -442,11 +544,11 @@ async def get_qualifying_upstream_ids(
         else:
             window_start = None
         completions = await _get_unconsumed_completions(
-            db, rule, window_start, downstream_scheduled_for
+            db, rule, window_start, downstream_scheduled_for, statuses
         )
     else:
         completions = []
-    
+
     return [c.id for c in completions[:required_count]]
 
 
@@ -455,39 +557,38 @@ async def _get_unconsumed_completions(
     rule: DependencyRule,
     window_start: datetime | None,
     window_end: datetime | None,
+    completion_statuses: tuple[str, ...],
 ) -> list[TaskCompletion]:
     """
-    Get unconsumed completions for a rule within optional time bounds.
+    Get unconsumed completions/skips for a rule within optional time bounds.
     """
     conditions = [
         TaskCompletion.task_id == rule.upstream_task_id,
-        TaskCompletion.status == "completed",
+        TaskCompletion.status.in_(completion_statuses),
     ]
-    
-    if window_start:
-        conditions.append(TaskCompletion.completed_at >= window_start)
-    if window_end:
-        conditions.append(TaskCompletion.completed_at < window_end)
-    
+
+    if window_start is None and window_end is not None:
+        conditions.append(_upstream_occurrence_on_or_before_anchor(window_end))
+    else:
+        if window_start:
+            conditions.append(TaskCompletion.completed_at >= window_start)
+        if window_end:
+            conditions.append(TaskCompletion.completed_at < window_end)
+
     completions_stmt = (
         select(TaskCompletion)
         .where(and_(*conditions))
-        .order_by(TaskCompletion.completed_at.desc())
+        .order_by(
+            TaskCompletion.scheduled_for.desc().nulls_last(),
+            TaskCompletion.completed_at.desc(),
+        )
     )
     result = await db.execute(completions_stmt)
     all_completions = result.scalars().all()
     
-    # Find consumed completions for this rule
-    consumed_stmt = (
-        select(DependencyResolution.upstream_completion_id)
-        .where(
-            DependencyResolution.dependency_rule_id == rule.id,
-            DependencyResolution.upstream_completion_id.isnot(None),
-        )
-    )
-    consumed_result = await db.execute(consumed_stmt)
+    consumed_result = await db.execute(_select_consumed_upstream_completion_ids(rule.id))
     consumed_ids = set(consumed_result.scalars().all())
-    
+
     return [c for c in all_completions if c.id not in consumed_ids]
 
 

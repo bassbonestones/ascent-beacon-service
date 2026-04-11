@@ -16,8 +16,9 @@ from app.core.auth import CurrentUser
 from app.core.db import get_db
 from app.models import Task
 from app.models.task_completion import TaskCompletion
-from app.schemas.tasks import TaskListResponse
+from app.schemas.tasks import TaskDependencySummary, TaskListResponse
 from app.api.helpers.task_helpers import task_to_response
+from app.services.task_dependency_summary import build_summaries_for_tasks
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
@@ -44,6 +45,10 @@ async def list_tasks(
     ),
     days_ahead: int = Query(
         default=14, ge=1, le=365, description="How many days ahead to load completion data for recurring tasks"
+    ),
+    include_dependency_summary: bool = Query(
+        default=False,
+        description="When true with client_today, include dependency_summary on each task that has downstream rules",
     ),
 ) -> TaskListResponse:
     """Get all tasks for the current user, with optional filters."""
@@ -266,7 +271,11 @@ async def list_tasks(
     # Count stats
     pending_count = sum(1 for t in tasks if t.status == "pending")
     completed_count = sum(1 for t in tasks if t.status == "completed")
-    
+
+    summaries: dict[str, TaskDependencySummary] = {}
+    if include_dependency_summary and client_today:
+        summaries = await build_summaries_for_tasks(db, user.id, tasks, client_today)
+
     return TaskListResponse(
         tasks=[
             task_to_response(
@@ -281,6 +290,7 @@ async def list_tasks(
                 skips_by_date=skips_by_date_map.get(t.id, {}),
                 skip_reason_today=skip_reason_today_map.get(t.id),
                 skip_reasons_by_date=skip_reasons_by_date_map.get(t.id, {}),
+                dependency_summary=summaries.get(t.id),
             )
             for t in tasks
         ],

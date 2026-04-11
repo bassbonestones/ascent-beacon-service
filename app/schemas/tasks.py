@@ -6,6 +6,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.dependency import ReadinessState
+
 
 # ============================================================================
 # Type Aliases
@@ -72,6 +74,15 @@ class TaskCompletionListResponse(BaseModel):
 # ============================================================================
 # Task Response Schemas
 # ============================================================================
+
+
+class TaskDependencySummary(BaseModel):
+    """Compact dependency state for task cards (Phase 4i-5)."""
+
+    readiness_state: ReadinessState
+    has_unmet_hard: bool
+    has_unmet_soft: bool
+    advisory_text: str | None = None
 
 
 class TaskResponse(BaseModel):
@@ -153,6 +164,9 @@ class TaskResponse(BaseModel):
 
     # Linked goal info (populated via eager loading)
     goal: GoalInfo | None = None
+
+    # Phase 4i-5: Optional; populated when list/detail requests dependency summary
+    dependency_summary: TaskDependencySummary | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -298,11 +312,30 @@ class AffectedDownstreamEntry(BaseModel):
     )
 
 
+class TransitiveHardDependentPreviewEntry(BaseModel):
+    """Hard downstream task in cascade (topological) order for skip preview UI."""
+
+    task_id: str
+    task_title: str
+    affected_occurrences: int = Field(
+        default=1,
+        ge=1,
+        description="Estimated occurrences for recurring downstream (UI preview)",
+    )
+
+
 class SkipTaskPreviewResponse(BaseModel):
     """Skip blocked until user confirms (hard downstream rules)."""
 
     status: Literal["has_dependents"] = "has_dependents"
     affected_downstream: list[AffectedDownstreamEntry]
+    transitive_hard_dependents_toposort: list[TransitiveHardDependentPreviewEntry] = Field(
+        default_factory=list,
+        description=(
+            "All tasks reachable by hard edges downstream of the skipped task, "
+            "in topological order (matches skip-chain cascade order; excludes root)."
+        ),
+    )
 
 
 class SkipChainTaskRequest(BaseModel):

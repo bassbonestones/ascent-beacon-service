@@ -1024,3 +1024,93 @@ class TestCheckHardDependentsFunction:
         affected = await check_hard_dependents(db_session, upstream_id, user_id)
         
         assert len(affected) == 0
+
+
+@pytest.mark.asyncio
+class TestTaskListDependencySummary:
+    """Phase 4i-5: dependency_summary embedded on task list/detail."""
+
+    async def test_list_tasks_include_dependency_summary(
+        self, client: AsyncClient, auth_headers: dict[str, str]
+    ) -> None:
+        day = "2030-06-10"
+        iso = f"{day}T15:00:00+00:00"
+        upstream_resp = await client.post(
+            "/tasks",
+            json={"title": "List Summary Up", "scheduled_at": iso},
+            headers=auth_headers,
+        )
+        assert upstream_resp.status_code == 201
+        upstream_id = upstream_resp.json()["id"]
+
+        downstream_resp = await client.post(
+            "/tasks",
+            json={"title": "List Summary Down", "scheduled_at": iso},
+            headers=auth_headers,
+        )
+        assert downstream_resp.status_code == 201
+        downstream_id = downstream_resp.json()["id"]
+
+        dep_resp = await client.post(
+            "/dependencies",
+            json={
+                "upstream_task_id": upstream_id,
+                "downstream_task_id": downstream_id,
+                "strength": "hard",
+                "scope": "next_occurrence",
+            },
+            headers=auth_headers,
+        )
+        assert dep_resp.status_code == 201
+
+        list_resp = await client.get(
+            f"/tasks?client_today={day}&include_dependency_summary=true&status=pending",
+            headers=auth_headers,
+        )
+        assert list_resp.status_code == 200
+        tasks = list_resp.json()["tasks"]
+        down = next(t for t in tasks if t["id"] == downstream_id)
+        assert down["dependency_summary"] is not None
+        assert down["dependency_summary"]["readiness_state"] == "blocked"
+        assert down["dependency_summary"]["has_unmet_hard"] is True
+        assert down["dependency_summary"]["has_unmet_soft"] is False
+
+        up = next(t for t in tasks if t["id"] == upstream_id)
+        assert up.get("dependency_summary") is None
+
+    async def test_get_task_include_dependency_summary(
+        self, client: AsyncClient, auth_headers: dict[str, str]
+    ) -> None:
+        day = "2030-06-11"
+        iso = f"{day}T10:00:00+00:00"
+        upstream_resp = await client.post(
+            "/tasks",
+            json={"title": "Get Up", "scheduled_at": iso},
+            headers=auth_headers,
+        )
+        upstream_id = upstream_resp.json()["id"]
+        downstream_resp = await client.post(
+            "/tasks",
+            json={"title": "Get Down", "scheduled_at": iso},
+            headers=auth_headers,
+        )
+        downstream_id = downstream_resp.json()["id"]
+        await client.post(
+            "/dependencies",
+            json={
+                "upstream_task_id": upstream_id,
+                "downstream_task_id": downstream_id,
+                "strength": "soft",
+            },
+            headers=auth_headers,
+        )
+
+        one = await client.get(
+            f"/tasks/{downstream_id}?include_dependency_summary=true&client_today={day}",
+            headers=auth_headers,
+        )
+        assert one.status_code == 200
+        body = one.json()
+        assert body["dependency_summary"] is not None
+        assert body["dependency_summary"]["has_unmet_soft"] is True
+        assert "Usually follows" in (body["dependency_summary"]["advisory_text"] or "")

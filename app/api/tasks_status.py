@@ -9,7 +9,7 @@ from typing import Annotated, Union
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import JSONResponse
 from starlette.responses import Response
-from sqlalchemy import select, and_
+from sqlalchemy import delete, select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import CurrentUser
 from app.core.db import get_db
@@ -26,6 +26,7 @@ from app.schemas.tasks import (
     SkipTaskPreviewResponse,
     SkipTaskRequest,
     TaskResponse,
+    TransitiveHardDependentPreviewEntry,
 )
 from app.api.helpers.task_helpers import (
     get_task_or_404,
@@ -37,9 +38,11 @@ from app.api.helpers.task_helpers import (
 from app.services.dependency_service import (
     check_dependencies,
     get_qualifying_upstream_ids,
+    get_transitive_unmet_hard_prerequisites,
     record_resolutions,
 )
 from app.services.skip_dependency_service import (
+    build_transitive_hard_dependent_preview_rows,
     evaluate_skip_hard_downstream_impact,
     get_transitive_hard_dependents_toposort,
 )
@@ -75,6 +78,18 @@ async def _persist_task_skip(
     task.skip_reason = reason
     task.updated_at = utc_now()
     await clear_sort_order_for_completed(db, task)
+    # Mirror one-time complete: record TaskCompletion so dependency rules can treat
+    # skip like an upstream occurrence (e.g. downstream may complete after "keep pending").
+    db.add(
+        TaskCompletion(
+            task_id=task.id,
+            status="skipped",
+            skip_reason=reason,
+            completed_at=utc_now(),
+            scheduled_for=scheduled_for,
+            local_date=local_date,
+        )
+    )
 
 
 @router.post(
@@ -235,9 +250,12 @@ async def skip_task(
     task = await get_task_or_404(db, task_id, user.id)
 
     impact = await evaluate_skip_hard_downstream_impact(
-        db, task_id, user.id, request.scheduled_for
+        db, task_id, user.id, request.scheduled_for, request.local_date
     )
     if impact.needs_confirmation and not request.confirm_proceed:
+        transitive_rows = await build_transitive_hard_dependent_preview_rows(
+            db, task_id, user.id, request.scheduled_for, request.local_date
+        )
         return SkipTaskPreviewResponse(
             affected_downstream=[
                 AffectedDownstreamEntry(
@@ -248,6 +266,10 @@ async def skip_task(
                     affected_occurrences=row["affected_occurrences"],
                 )
                 for row in impact.affected
+            ],
+            transitive_hard_dependents_toposort=[
+                TransitiveHardDependentPreviewEntry(**row)
+                for row in transitive_rows
             ],
         )
 
@@ -288,7 +310,9 @@ async def skip_task_chain(
         )
 
     root = await get_task_or_404(db, task_id, user.id)
-    dependent_ids = await get_transitive_hard_dependents_toposort(db, task_id, user.id)
+    dependent_ids = await get_transitive_hard_dependents_toposort(
+        db, task_id, user.id, request.scheduled_for, request.local_date
+    )
 
     out: list[TaskResponse] = []
 
@@ -341,7 +365,9 @@ async def reopen_task(
     Reopen a completed or skipped task.
     
     For recurring tasks: deletes the completion record for the specified time slot.
-    For one-time tasks: sets status back to pending.
+    For one-time tasks: sets status back to pending and deletes all ``TaskCompletion``
+    rows for this task so dependency checks and ``next_occurrence`` consumption match
+    the reset state (resolutions CASCADE on completion delete).
     """
     task = await get_task_or_404(db, task_id, user.id)
     
@@ -402,7 +428,10 @@ async def reopen_task(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Task is already pending",
         )
-    
+
+    await db.execute(delete(TaskCompletion).where(TaskCompletion.task_id == task.id))
+    await db.flush()
+
     task.status = "pending"
     task.completed_at = None
     task.skip_reason = None
@@ -443,12 +472,20 @@ async def get_dependency_status(
     
     Returns list of blockers (prerequisites), whether they're met,
     and the overall readiness state.
+    Includes ``transitive_unmet_hard_prerequisites`` (topo order) for chained hard deps.
     """
-    # Import here to avoid circular import
-    from app.schemas.dependency import DependencyStatusResponse
-    
-    task = await get_task_or_404(db, task_id, user.id)
-    return await check_dependencies(db, task_id, user.id, scheduled_for)
+    await get_task_or_404(db, task_id, user.id)
+    base = await check_dependencies(db, task_id, user.id, scheduled_for)
+    transitive = await get_transitive_unmet_hard_prerequisites(
+        db, task_id, user.id, scheduled_for
+    )
+    return DependencyStatusResponse(
+        task_id=base.task_id,
+        scheduled_for=base.scheduled_for,
+        dependencies=base.dependencies,
+        transitive_unmet_hard_prerequisites=transitive,
+        dependents=base.dependents,
+    )
 
 
 @router.post(

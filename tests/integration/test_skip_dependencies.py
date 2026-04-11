@@ -76,6 +76,72 @@ class TestSkipHardDownstream:
         assert len(body["affected_downstream"]) == 1
         assert body["affected_downstream"][0]["task_id"] == did
         assert body["affected_downstream"][0]["strength"] == "hard"
+        topo = body.get("transitive_hard_dependents_toposort") or []
+        assert [x["task_id"] for x in topo] == [did]
+
+    async def test_skip_hard_preview_transitive_chain_topo_order(
+        self, client: AsyncClient, auth_headers: dict[str, str]
+    ) -> None:
+        """A -> B -> C hard: preview includes full downstream chain B then C."""
+        a = await client.post("/tasks", json={"title": "Prev A"}, headers=auth_headers)
+        b = await client.post("/tasks", json={"title": "Prev B"}, headers=auth_headers)
+        c = await client.post("/tasks", json={"title": "Prev C"}, headers=auth_headers)
+        aid, bid, cid = a.json()["id"], b.json()["id"], c.json()["id"]
+        for up, down in ((aid, bid), (bid, cid)):
+            r = await client.post(
+                "/dependencies",
+                json={
+                    "upstream_task_id": up,
+                    "downstream_task_id": down,
+                    "strength": "hard",
+                    "scope": "next_occurrence",
+                    "required_occurrence_count": 1,
+                },
+                headers=auth_headers,
+            )
+            assert r.status_code == 201
+        sk = await client.post(f"/tasks/{aid}/skip", json={}, headers=auth_headers)
+        assert sk.status_code == 200
+        body = sk.json()
+        assert body["status"] == "has_dependents"
+        topo = body["transitive_hard_dependents_toposort"]
+        assert [x["task_id"] for x in topo] == [bid, cid]
+        assert [x["task_title"] for x in topo] == ["Prev B", "Prev C"]
+
+    async def test_skip_hard_preview_transitive_omits_still_completed_downstream(
+        self, client: AsyncClient, auth_headers: dict[str, str]
+    ) -> None:
+        """A→B→C hard: after full complete, reopen only A and B — preview lists B, not C."""
+        a = await client.post("/tasks", json={"title": "Reo A"}, headers=auth_headers)
+        b = await client.post("/tasks", json={"title": "Reo B"}, headers=auth_headers)
+        c = await client.post("/tasks", json={"title": "Reo C"}, headers=auth_headers)
+        aid, bid, cid = a.json()["id"], b.json()["id"], c.json()["id"]
+        for up, down in ((aid, bid), (bid, cid)):
+            r = await client.post(
+                "/dependencies",
+                json={
+                    "upstream_task_id": up,
+                    "downstream_task_id": down,
+                    "strength": "hard",
+                    "scope": "next_occurrence",
+                    "required_occurrence_count": 1,
+                },
+                headers=auth_headers,
+            )
+            assert r.status_code == 201
+        for tid in (aid, bid, cid):
+            co = await client.post(f"/tasks/{tid}/complete", json={}, headers=auth_headers)
+            assert co.status_code == 200, co.text
+        for tid in (aid, bid):
+            ro = await client.post(f"/tasks/{tid}/reopen", json={}, headers=auth_headers)
+            assert ro.status_code == 200, ro.text
+        sk = await client.post(f"/tasks/{aid}/skip", json={}, headers=auth_headers)
+        assert sk.status_code == 200, sk.text
+        body = sk.json()
+        assert body["status"] == "has_dependents"
+        topo_ids = [x["task_id"] for x in body["transitive_hard_dependents_toposort"]]
+        assert topo_ids == [bid]
+        assert cid not in topo_ids
 
     async def test_skip_hard_confirm_proceed_persists(
         self, client: AsyncClient, auth_headers: dict[str, str]

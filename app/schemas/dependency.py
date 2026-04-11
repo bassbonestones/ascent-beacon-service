@@ -214,6 +214,8 @@ class DependencyStatusResponse(BaseModel):
 
     # Dependencies (what this task requires)
     dependencies: list[DependencyBlocker] = []
+    # Unmet hard prerequisites in topological order (recursive chain), for completion UI
+    transitive_unmet_hard_prerequisites: list[DependencyBlocker] = []
     has_unmet_hard: bool = False
     has_unmet_soft: bool = False
     all_met: bool = True

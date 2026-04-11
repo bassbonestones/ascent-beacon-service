@@ -8,10 +8,10 @@ from __future__ import annotations
 
 from collections import defaultdict, deque
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import select, func
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -108,6 +108,54 @@ async def _max_slots_in_window(
     return max(1, span_minutes // max(1, interval_minutes))
 
 
+async def _task_eligible_for_hard_skip_cascade(
+    db: AsyncSession,
+    task: Task,
+    scheduled_for: datetime | None,
+    local_date: str | None,
+) -> bool:
+    """
+    True if this task/occurrence may be cascade-skipped with the root skip anchor.
+
+    Omits one-time tasks not in ``pending`` and recurring tasks that already have a
+    completed or skipped ``TaskCompletion`` for the anchor calendar day (so reopen
+    partial chains do not list still-finished downstream, e.g. C after only A,B reopen).
+    """
+    if not task.is_recurring:
+        return task.status == "pending"
+
+    anchor: datetime = scheduled_for if scheduled_for is not None else utc_now()
+    if anchor.tzinfo is None:
+        anchor = anchor.replace(tzinfo=timezone.utc)
+    if local_date:
+        date_key = local_date
+    else:
+        date_key = anchor.strftime("%Y-%m-%d")
+
+    day = datetime.strptime(date_key, "%Y-%m-%d").date()
+    day_start = datetime.combine(day, datetime.min.time(), tzinfo=timezone.utc)
+    day_end = day_start + timedelta(days=1)
+
+    stmt = (
+        select(func.count())
+        .select_from(TaskCompletion)
+        .where(
+            TaskCompletion.task_id == task.id,
+            TaskCompletion.status.in_(("completed", "skipped")),
+            or_(
+                TaskCompletion.local_date == date_key,
+                and_(
+                    TaskCompletion.scheduled_for.isnot(None),
+                    TaskCompletion.scheduled_for >= day_start,
+                    TaskCompletion.scheduled_for < day_end,
+                ),
+            ),
+        )
+    )
+    result = await db.execute(stmt)
+    return int(result.scalar_one() or 0) == 0
+
+
 async def skip_makes_hard_rule_impossible(
     db: AsyncSession,
     rule: DependencyRule,
@@ -123,7 +171,12 @@ async def skip_makes_hard_rule_impossible(
     if rule.required_occurrence_count <= 1:
         return False
 
-    completed = await _count_qualifying_completions(db, rule, scheduled_anchor)
+    completed = await _count_qualifying_completions(
+        db,
+        rule,
+        scheduled_anchor,
+        completion_statuses=("completed", "skipped"),
+    )
     still_needed = max(0, rule.required_occurrence_count - completed)
     if still_needed == 0:
         return False
@@ -153,6 +206,7 @@ async def evaluate_skip_hard_downstream_impact(
     upstream_task_id: str,
     user_id: str,
     scheduled_for: datetime | None,
+    local_date: str | None = None,
 ) -> SkipImpactResult:
     """
     Decide if skipping upstream_task_id requires confirmation.
@@ -189,6 +243,10 @@ async def evaluate_skip_hard_downstream_impact(
         if rule.strength != "hard":
             continue
         downstream = rule.downstream_task
+        if not await _task_eligible_for_hard_skip_cascade(
+            db, downstream, scheduled_for, local_date
+        ):
+            continue
         entry = {
             "task_id": downstream.id,
             "task_title": downstream.title,
@@ -208,10 +266,47 @@ async def evaluate_skip_hard_downstream_impact(
     return SkipImpactResult(needs_confirmation=needs_confirmation, affected=affected)
 
 
+async def build_transitive_hard_dependent_preview_rows(
+    db: AsyncSession,
+    start_task_id: str,
+    user_id: str,
+    scheduled_for: datetime | None = None,
+    local_date: str | None = None,
+) -> list[dict[str, Any]]:
+    """
+    Topo-ordered hard downstream tasks (excluding start) for skip cascade UI.
+
+    Order matches :func:`get_transitive_hard_dependents_toposort` / skip-chain.
+    """
+    ids = await get_transitive_hard_dependents_toposort(
+        db, start_task_id, user_id, scheduled_for, local_date
+    )
+    if not ids:
+        return []
+    stmt = select(Task).where(Task.id.in_(ids))
+    result = await db.execute(stmt)
+    by_id = {t.id: t for t in result.scalars().all()}
+    out: list[dict[str, Any]] = []
+    for tid in ids:
+        t = by_id.get(tid)
+        if t is None:
+            continue
+        out.append(
+            {
+                "task_id": tid,
+                "task_title": t.title,
+                "affected_occurrences": _estimate_downstream_occurrences(t),
+            }
+        )
+    return out
+
+
 async def get_transitive_hard_dependents_toposort(
     db: AsyncSession,
     start_task_id: str,
     user_id: str,
+    scheduled_for: datetime | None = None,
+    local_date: str | None = None,
 ) -> list[str]:
     """
     All tasks reachable via hard dependency edges downstream from start_task_id,
@@ -280,4 +375,19 @@ async def get_transitive_hard_dependents_toposort(
     if len(topo) != len(reachable):
         raise ValueError("Cycle detected in hard dependency subgraph")
 
-    return topo
+    if not topo:
+        return []
+
+    task_stmt = select(Task).where(Task.id.in_(topo))
+    task_result = await db.execute(task_stmt)
+    by_id = {t.id: t for t in task_result.scalars().all()}
+    filtered: list[str] = []
+    for tid in topo:
+        t = by_id.get(tid)
+        if t is None:
+            continue
+        if await _task_eligible_for_hard_skip_cascade(
+            db, t, scheduled_for, local_date
+        ):
+            filtered.append(tid)
+    return filtered
