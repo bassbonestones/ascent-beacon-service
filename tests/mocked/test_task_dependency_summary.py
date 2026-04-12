@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.schemas.dependency import DependencyBlocker, DependencyStatusResponse, TaskInfo
+from app.services import intraday_occurrence_anchors as ioa
 from app.services import task_dependency_summary as tds
 
 
@@ -23,7 +24,7 @@ class _OneShotTask:
 def test_occurrence_recurring_with_naive_scheduled_at() -> None:
     t = _RecurringTask()
     t.scheduled_at = datetime(2026, 1, 1, 8, 15, 0)
-    out = tds._occurrence_scheduled_for(t, date(2026, 6, 1))
+    out = ioa._occurrence_scheduled_for(t, date(2026, 6, 1), None)
     assert out is not None
     assert out.date() == date(2026, 6, 1)
     assert out.hour == 8 and out.minute == 15
@@ -33,7 +34,7 @@ def test_occurrence_recurring_midnight_template_anchors_end_of_day() -> None:
     """Midnight slot would make completed_at < 00:00 exclude same-day upstream."""
     t = _RecurringTask()
     t.scheduled_at = datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
-    out = tds._occurrence_scheduled_for(t, date(2026, 6, 2))
+    out = ioa._occurrence_scheduled_for(t, date(2026, 6, 2), None)
     assert out is not None
     assert out.hour == 23 and out.minute == 59 and out.second == 59
 
@@ -41,7 +42,7 @@ def test_occurrence_recurring_midnight_template_anchors_end_of_day() -> None:
 def test_occurrence_recurring_no_scheduled_at() -> None:
     t = _RecurringTask()
     t.scheduled_at = None
-    out = tds._occurrence_scheduled_for(t, date(2026, 6, 2))
+    out = ioa._occurrence_scheduled_for(t, date(2026, 6, 2), None)
     assert out == datetime.combine(
         date(2026, 6, 2), time(23, 59, 59, 999999), tzinfo=timezone.utc
     )
@@ -50,13 +51,13 @@ def test_occurrence_recurring_no_scheduled_at() -> None:
 def test_occurrence_one_time_wrong_day() -> None:
     t = _OneShotTask()
     t.scheduled_at = datetime(2026, 6, 1, 12, 0, tzinfo=timezone.utc)
-    assert tds._occurrence_scheduled_for(t, date(2026, 6, 2)) is None
+    assert ioa._occurrence_scheduled_for(t, date(2026, 6, 2), None) is None
 
 
 def test_occurrence_one_time_same_day() -> None:
     t = _OneShotTask()
     t.scheduled_at = datetime(2026, 6, 3, 9, 0, tzinfo=timezone.utc)
-    out = tds._occurrence_scheduled_for(t, date(2026, 6, 3))
+    out = ioa._occurrence_scheduled_for(t, date(2026, 6, 3), None)
     assert out == t.scheduled_at
 
 
@@ -64,7 +65,7 @@ def test_occurrence_scheduled_date_match() -> None:
     t = _OneShotTask()
     t.scheduled_at = None
     t.scheduled_date = "2026-06-04"
-    out = tds._occurrence_scheduled_for(t, date(2026, 6, 4))
+    out = ioa._occurrence_scheduled_for(t, date(2026, 6, 4), None)
     assert out == datetime.combine(
         date(2026, 6, 4), time(23, 59, 59, 999999), tzinfo=timezone.utc
     )
@@ -73,20 +74,20 @@ def test_occurrence_scheduled_date_match() -> None:
 def test_occurrence_scheduled_date_invalid() -> None:
     t = _OneShotTask()
     t.scheduled_date = "not-a-date"
-    assert tds._occurrence_scheduled_for(t, date(2026, 6, 4)) is None
+    assert ioa._occurrence_scheduled_for(t, date(2026, 6, 4), None) is None
 
 
 def test_occurrence_scheduled_date_mismatch() -> None:
     t = _OneShotTask()
     t.scheduled_date = "2026-06-05"
-    assert tds._occurrence_scheduled_for(t, date(2026, 6, 6)) is None
+    assert ioa._occurrence_scheduled_for(t, date(2026, 6, 6), None) is None
 
 
 def test_occurrence_anytime_fallback() -> None:
     t = _OneShotTask()
     t.scheduled_at = None
     t.scheduled_date = None
-    out = tds._occurrence_scheduled_for(t, date(2026, 6, 7))
+    out = ioa._occurrence_scheduled_for(t, date(2026, 6, 7), None)
     assert out == datetime.combine(
         date(2026, 6, 7), time(23, 59, 59, 999999), tzinfo=timezone.utc
     )
@@ -137,6 +138,7 @@ async def test_build_task_dependency_summary_soft_skipped(
         is_recurring = True
         scheduled_at = datetime(2026, 6, 10, 12, 0, tzinfo=timezone.utc)
         scheduled_date = None
+        recurrence_rule = None
 
     db = AsyncMock()
     summary = await tds.build_task_dependency_summary(db, "user-1", _Task(), "2026-06-10")
@@ -151,22 +153,25 @@ async def test_build_summaries_for_tasks_filters(
     async def _fake_ids(db: object, user_id: str) -> set[str]:
         return {"d1"}
 
-    async def _fake_build(
+    async def _fake_build_day(
         db: object,
         user_id: str,
         task: object,
-        client_today_str: str,
-    ) -> object:
+        local_date_str: str,
+        client_timezone: str | None,
+    ) -> dict[str, object]:
         from app.schemas.tasks import TaskDependencySummary
 
-        return TaskDependencySummary(
-            readiness_state="ready",
-            has_unmet_hard=False,
-            has_unmet_soft=False,
-        )
+        return {
+            "": TaskDependencySummary(
+                readiness_state="ready",
+                has_unmet_hard=False,
+                has_unmet_soft=False,
+            )
+        }
 
     monkeypatch.setattr(tds, "downstream_task_ids_with_rules", _fake_ids)
-    monkeypatch.setattr(tds, "build_task_dependency_summary", _fake_build)
+    monkeypatch.setattr(tds, "build_task_dependency_summaries_for_day", _fake_build_day)
 
     class _A:
         id = "d1"
@@ -218,6 +223,7 @@ async def test_build_task_dependency_summary_soft_not_completed(
         is_recurring = False
         scheduled_at = datetime(2026, 6, 10, 9, 0, tzinfo=timezone.utc)
         scheduled_date = None
+        recurrence_rule = None
 
     db = AsyncMock()
     summary = await tds.build_task_dependency_summary(db, "user-1", _Task(), "2026-06-10")
@@ -255,6 +261,7 @@ async def test_build_task_dependency_summary_hard_no_advisory(
         is_recurring = True
         scheduled_at = datetime(2026, 6, 10, 12, 0, tzinfo=timezone.utc)
         scheduled_date = None
+        recurrence_rule = None
 
     db = AsyncMock()
     summary = await tds.build_task_dependency_summary(db, "user-1", _Task(), "2026-06-10")

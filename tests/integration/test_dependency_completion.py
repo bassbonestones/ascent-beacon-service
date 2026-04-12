@@ -1153,12 +1153,210 @@ class TestTaskListDependencySummary:
         assert down["dependency_summary"]["has_unmet_soft"] is False
         by_date = down.get("dependency_summaries_by_local_date") or {}
         assert day in by_date
-        assert by_date[day]["has_unmet_hard"] is True
+        assert by_date[day][""]["has_unmet_hard"] is True
         next_day = "2030-06-11"
         assert next_day in by_date
+        assert by_date[next_day][""]["has_unmet_hard"] is True
 
         up = next(t for t in tasks if t["id"] == upstream_id)
         assert up.get("dependency_summary") is None
+
+    async def test_list_tasks_dependency_summary_per_intraday_slot(
+        self, client: AsyncClient, auth_headers: dict[str, str]
+    ) -> None:
+        """After one upstream completion, first timed slot ready; later slots still blocked."""
+        day = "2030-07-01"
+        rr_down = (
+            "FREQ=DAILY;X-INTRADAY=specific_times;X-TIMES=09:00,14:00,19:00"
+        )
+        upstream_resp = await client.post(
+            "/tasks",
+            json={
+                "title": "Gym slot",
+                "scheduled_at": f"{day}T07:00:00+00:00",
+                "is_recurring": True,
+                "recurrence_rule": "FREQ=DAILY",
+                "scheduling_mode": "fixed",
+                "recurrence_behavior": "essential",
+            },
+            headers=auth_headers,
+        )
+        assert upstream_resp.status_code == 201
+        upstream_id = upstream_resp.json()["id"]
+
+        downstream_resp = await client.post(
+            "/tasks",
+            json={
+                "title": "Protein 3x",
+                "scheduled_at": f"{day}T09:00:00+00:00",
+                "is_recurring": True,
+                "recurrence_rule": rr_down,
+                "scheduling_mode": "fixed",
+                "recurrence_behavior": "essential",
+            },
+            headers=auth_headers,
+        )
+        assert downstream_resp.status_code == 201
+        downstream_id = downstream_resp.json()["id"]
+
+        dep_resp = await client.post(
+            "/dependencies",
+            json={
+                "upstream_task_id": upstream_id,
+                "downstream_task_id": downstream_id,
+                "strength": "hard",
+                "scope": "next_occurrence",
+            },
+            headers=auth_headers,
+        )
+        assert dep_resp.status_code == 201
+
+        list_before = await client.get(
+            f"/tasks?client_today={day}&include_dependency_summary=true"
+            f"&status=pending&days_ahead=14&client_timezone=UTC",
+            headers=auth_headers,
+        )
+        assert list_before.status_code == 200
+        down0 = next(t for t in list_before.json()["tasks"] if t["id"] == downstream_id)
+        by0 = down0["dependency_summaries_by_local_date"][day]
+        assert set(by0.keys()) == {"0900", "1400", "1900"}
+        assert by0["0900"]["has_unmet_hard"] is True
+        assert by0["1400"]["has_unmet_hard"] is True
+
+        complete_up = await client.post(
+            f"/tasks/{upstream_id}/complete",
+            json={
+                "scheduled_for": f"{day}T07:00:00+00:00",
+                "local_date": day,
+            },
+            headers=auth_headers,
+        )
+        assert complete_up.status_code == 200
+
+        list_mid = await client.get(
+            f"/tasks?client_today={day}&include_dependency_summary=true"
+            f"&status=pending&days_ahead=14&client_timezone=UTC",
+            headers=auth_headers,
+        )
+        assert list_mid.status_code == 200
+        down_mid = next(t for t in list_mid.json()["tasks"] if t["id"] == downstream_id)
+        by_mid = down_mid["dependency_summaries_by_local_date"][day]
+        assert by_mid["0900"]["has_unmet_hard"] is False
+        assert by_mid["1400"]["has_unmet_hard"] is True
+        assert by_mid["1900"]["has_unmet_hard"] is True
+
+        complete_first = await client.post(
+            f"/tasks/{downstream_id}/complete",
+            json={
+                "scheduled_for": f"{day}T09:00:00+00:00",
+                "local_date": day,
+            },
+            headers=auth_headers,
+        )
+        assert complete_first.status_code == 200
+
+        list_after = await client.get(
+            f"/tasks?client_today={day}&include_dependency_summary=true"
+            f"&status=pending&days_ahead=14&client_timezone=UTC",
+            headers=auth_headers,
+        )
+        assert list_after.status_code == 200
+        down1 = next(t for t in list_after.json()["tasks"] if t["id"] == downstream_id)
+        by1 = down1["dependency_summaries_by_local_date"][day]
+        assert by1["1400"]["has_unmet_hard"] is True
+        assert by1["1900"]["has_unmet_hard"] is True
+
+    async def test_list_tasks_dependency_summary_eod_upstream_timed_downstream(
+        self, client: AsyncClient, auth_headers: dict[str, str]
+    ) -> None:
+        """Anytime/single upstream stores end-of-day scheduled_for; intraday slots still see it."""
+        day = "2030-08-15"
+        rr_up = "FREQ=DAILY;X-INTRADAY=anytime;X-DAILYOCC=1"
+        rr_down = (
+            "FREQ=DAILY;X-INTRADAY=specific_times;X-TIMES=09:00,14:00,19:00"
+        )
+        upstream_resp = await client.post(
+            "/tasks",
+            json={
+                "title": "Morning routine",
+                "scheduled_at": f"{day}T12:00:00+00:00",
+                "is_recurring": True,
+                "recurrence_rule": rr_up,
+                "scheduling_mode": "fixed",
+                "recurrence_behavior": "essential",
+            },
+            headers=auth_headers,
+        )
+        assert upstream_resp.status_code == 201
+        upstream_id = upstream_resp.json()["id"]
+
+        downstream_resp = await client.post(
+            "/tasks",
+            json={
+                "title": "Protein 3x",
+                "scheduled_at": f"{day}T09:00:00+00:00",
+                "is_recurring": True,
+                "recurrence_rule": rr_down,
+                "scheduling_mode": "fixed",
+                "recurrence_behavior": "essential",
+            },
+            headers=auth_headers,
+        )
+        assert downstream_resp.status_code == 201
+        downstream_id = downstream_resp.json()["id"]
+
+        dep_resp = await client.post(
+            "/dependencies",
+            json={
+                "upstream_task_id": upstream_id,
+                "downstream_task_id": downstream_id,
+                "strength": "hard",
+                "scope": "next_occurrence",
+            },
+            headers=auth_headers,
+        )
+        assert dep_resp.status_code == 201
+
+        eod = f"{day}T23:59:59+00:00"
+        complete_up = await client.post(
+            f"/tasks/{upstream_id}/complete",
+            json={"scheduled_for": eod, "local_date": day},
+            headers=auth_headers,
+        )
+        assert complete_up.status_code == 200
+
+        list_mid = await client.get(
+            f"/tasks?client_today={day}&include_dependency_summary=true"
+            f"&status=pending&days_ahead=14&client_timezone=UTC",
+            headers=auth_headers,
+        )
+        assert list_mid.status_code == 200
+        down_mid = next(t for t in list_mid.json()["tasks"] if t["id"] == downstream_id)
+        by_mid = down_mid["dependency_summaries_by_local_date"][day]
+        assert by_mid["0900"]["has_unmet_hard"] is False
+        assert by_mid["1400"]["has_unmet_hard"] is True
+        assert by_mid["1900"]["has_unmet_hard"] is True
+
+        complete_first = await client.post(
+            f"/tasks/{downstream_id}/complete",
+            json={
+                "scheduled_for": f"{day}T09:00:00+00:00",
+                "local_date": day,
+            },
+            headers=auth_headers,
+        )
+        assert complete_first.status_code == 200
+
+        list_after = await client.get(
+            f"/tasks?client_today={day}&include_dependency_summary=true"
+            f"&status=pending&days_ahead=14&client_timezone=UTC",
+            headers=auth_headers,
+        )
+        assert list_after.status_code == 200
+        down_after = next(t for t in list_after.json()["tasks"] if t["id"] == downstream_id)
+        by_after = down_after["dependency_summaries_by_local_date"][day]
+        assert by_after["1400"]["has_unmet_hard"] is True
+        assert by_after["1900"]["has_unmet_hard"] is True
 
     async def test_get_task_include_dependency_summary(
         self, client: AsyncClient, auth_headers: dict[str, str]

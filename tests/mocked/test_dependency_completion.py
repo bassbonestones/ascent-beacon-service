@@ -539,7 +539,7 @@ class TestResolveNextOccurrenceEarlyBreak:
         cons_result.scalars.return_value.all.return_value = []
 
         mock_db = AsyncMock()
-        mock_db.execute.side_effect = [comp_result, task_result, cons_result]
+        mock_db.execute.side_effect = [task_result, comp_result, cons_result]
 
         with patch("app.services.dependency_service.utc_now", return_value=anchor):
             result = await _resolve_next_occurrence(
@@ -576,7 +576,7 @@ class TestResolveNextOccurrenceEarlyBreak:
         cons_result.scalars.return_value.all.return_value = []
 
         mock_db = AsyncMock()
-        mock_db.execute.side_effect = [comp_result, task_result, cons_result]
+        mock_db.execute.side_effect = [task_result, comp_result, cons_result]
 
         result = await _resolve_next_occurrence(
             mock_db, mock_rule, anchor, ("completed",),
@@ -762,7 +762,7 @@ class TestGetQualifyingUpstreamIds:
         task_result.scalar_one_or_none.return_value = None
 
         mock_db = AsyncMock()
-        mock_db.execute.side_effect = [comp_result, cons_result, task_result]
+        mock_db.execute.side_effect = [task_result, comp_result, cons_result]
 
         anchor = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
         result = await get_qualifying_upstream_ids(mock_db, mock_rule, anchor, 3)

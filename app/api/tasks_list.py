@@ -18,7 +18,10 @@ from app.models import Task
 from app.models.task_completion import TaskCompletion
 from app.schemas.tasks import TaskDependencySummary, TaskListResponse
 from app.api.helpers.task_helpers import task_to_response
-from app.services.task_dependency_summary import build_summaries_by_task_and_dates
+from app.services.task_dependency_summary import (
+    build_summaries_by_task_and_dates,
+    first_slot_summary,
+)
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
@@ -49,6 +52,10 @@ async def list_tasks(
     include_dependency_summary: bool = Query(
         default=False,
         description="When true with client_today, include dependency_summary on each task that has downstream rules",
+    ),
+    client_timezone: str | None = Query(
+        default=None,
+        description="IANA timezone (e.g. America/New_York) for intraday dependency anchors; recommended with include_dependency_summary",
     ),
 ) -> TaskListResponse:
     """Get all tasks for the current user, with optional filters."""
@@ -286,10 +293,15 @@ async def list_tasks(
     pending_count = sum(1 for t in tasks if t.status == "pending")
     completed_count = sum(1 for t in tasks if t.status == "completed")
 
-    summaries_by_date: dict[str, dict[str, TaskDependencySummary]] = {}
+    summaries_by_date: dict[str, dict[str, dict[str, TaskDependencySummary]]] = {}
     if include_dependency_summary and client_today:
         summaries_by_date = await build_summaries_by_task_and_dates(
-            db, user.id, tasks, client_today, days_ahead
+            db,
+            user.id,
+            tasks,
+            client_today,
+            days_ahead,
+            client_timezone=client_timezone,
         )
 
     return TaskListResponse(
@@ -307,7 +319,9 @@ async def list_tasks(
                 skip_reason_today=skip_reason_today_map.get(t.id),
                 skip_reasons_by_date=skip_reasons_by_date_map.get(t.id, {}),
                 dependency_summary=(
-                    summaries_by_date.get(t.id, {}).get(today_str)
+                    first_slot_summary(
+                        summaries_by_date.get(t.id, {}).get(today_str, {})
+                    )
                     if summaries_by_date
                     else None
                 ),

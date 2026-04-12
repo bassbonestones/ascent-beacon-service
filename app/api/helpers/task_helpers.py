@@ -51,7 +51,7 @@ def task_to_response(
     skip_reason_today: str | None = None,
     skip_reasons_by_date: dict[str, str | None] | None = None,
     dependency_summary: TaskDependencySummary | None = None,
-    dependency_summaries_by_local_date: dict[str, TaskDependencySummary]
+    dependency_summaries_by_local_date: dict[str, dict[str, TaskDependencySummary]]
     | None = None,
 ) -> TaskResponse:
     """Convert Task model to response schema.

@@ -125,6 +125,10 @@ async def get_task(
         default=None,
         description="Client local date YYYY-MM-DD for dependency_summary context",
     ),
+    client_timezone: str | None = Query(
+        default=None,
+        description="IANA timezone for intraday dependency anchors with include_dependency_summary",
+    ),
 ) -> TaskResponse:
     """Get a task by ID."""
     task = await get_task_or_404(db, task_id, user.id)
@@ -132,7 +136,9 @@ async def get_task(
     if include_dependency_summary and client_today:
         from app.services.task_dependency_summary import build_summaries_for_tasks
 
-        summaries = await build_summaries_for_tasks(db, user.id, [task], client_today)
+        summaries = await build_summaries_for_tasks(
+            db, user.id, [task], client_today, client_timezone=client_timezone
+        )
         dep_summary = summaries.get(task.id)
     return task_to_response(task, dependency_summary=dep_summary)
 

@@ -19,6 +19,7 @@ from app.models.task_completion import TaskCompletion
 from app.services.dependency_recurrence_period import (
     filter_completions_next_occurrence_period,
 )
+from app.services.intraday_occurrence_anchors import parse_intraday_rrule
 from app.schemas.dependency import (
     DependencyBlocker,
     DependencyDependent,
@@ -95,6 +96,43 @@ def _upstream_occurrence_on_or_before_anchor(
         TaskCompletion.scheduled_for.is_(None)
         & (TaskCompletion.completed_at <= anchor_time),
     )
+
+
+def _upstream_allows_same_local_calendar_day_sql(
+    upstream: Task | None,
+) -> bool:
+    """
+    True when upstream completions usually carry end-of-day ``scheduled_for`` while
+    still meaning \"that calendar day\".
+
+    ``scheduled_for <= intraday_slot_anchor`` would otherwise drop a same-day
+    anytime/single/window upstream for earlier downstream slots (e.g. 09:00).
+    """
+    if upstream is None:
+        return False
+    if not upstream.is_recurring:
+        return True
+    rr = upstream.recurrence_rule or ""
+    if not rr:
+        return True
+    mode = parse_intraday_rrule(rr).intraday_mode
+    # ``single`` (and interval/specific_times) use real slot times in ``scheduled_for``;
+    # same-calendar OR would mis-count midday skips for morning downstream anchors.
+    return mode in ("anytime", "window")
+
+
+def _upstream_occurrence_qualifies_sql(
+    anchor_time: datetime,
+    downstream_local_date: str | None,
+    upstream: Task | None,
+) -> ColumnElement[bool]:
+    base = _upstream_occurrence_on_or_before_anchor(anchor_time)
+    if downstream_local_date is None or not _upstream_allows_same_local_calendar_day_sql(
+        upstream
+    ):
+        return base
+    same_day = TaskCompletion.local_date == downstream_local_date
+    return or_(base, same_day)
 
 
 async def resolve_stated_validity_window_minutes(
@@ -403,7 +441,11 @@ async def _resolve_next_occurrence(
     """
     # Use provided time or current time as the anchor
     anchor_time = downstream_scheduled_for or utc_now()
-    
+    upstream = await _load_upstream_task(db, rule)
+    time_qualifies = _upstream_occurrence_qualifies_sql(
+        anchor_time, downstream_local_date, upstream
+    )
+
     # Find completions that:
     # 1. Are for the upstream task
     # 2. Were completed before anchor time (or at anchor time for "now" case)
@@ -413,7 +455,7 @@ async def _resolve_next_occurrence(
         .where(
             TaskCompletion.task_id == rule.upstream_task_id,
             TaskCompletion.status.in_(completion_statuses),
-            _upstream_occurrence_on_or_before_anchor(anchor_time),
+            time_qualifies,
         )
         .order_by(
             TaskCompletion.scheduled_for.desc().nulls_last(),
@@ -422,8 +464,6 @@ async def _resolve_next_occurrence(
     )
     result = await db.execute(completions_stmt)
     completions = list(result.scalars().all())
-
-    upstream = await _load_upstream_task(db, rule)
     if upstream is not None:
         completions = filter_completions_next_occurrence_period(
             upstream,
@@ -634,11 +674,11 @@ async def get_qualifying_upstream_ids(
         if rule.strength == "hard"
         else _COMPLETED_ONLY
     )
+    upstream = await _load_upstream_task(db, rule)
     if rule.scope == "all_occurrences":
         completions = await _get_unconsumed_completions(
             db, rule, None, None, statuses
         )
-        upstream = await _load_upstream_task(db, rule)
         if upstream is not None:
             anchor = downstream_scheduled_for or utc_now()
             completions = filter_completions_next_occurrence_period(
@@ -649,9 +689,14 @@ async def get_qualifying_upstream_ids(
             )
     elif rule.scope == "next_occurrence":
         completions = await _get_unconsumed_completions(
-            db, rule, None, downstream_scheduled_for, statuses
+            db,
+            rule,
+            None,
+            downstream_scheduled_for,
+            statuses,
+            downstream_local_date=downstream_local_date,
+            upstream=upstream,
         )
-        upstream = await _load_upstream_task(db, rule)
         if upstream is not None:
             anchor = downstream_scheduled_for or utc_now()
             completions = filter_completions_next_occurrence_period(
@@ -683,6 +728,9 @@ async def _get_unconsumed_completions(
     window_start: datetime | None,
     window_end: datetime | None,
     completion_statuses: tuple[str, ...],
+    *,
+    downstream_local_date: str | None = None,
+    upstream: Task | None = None,
 ) -> list[TaskCompletion]:
     """
     Get unconsumed completions/skips for a rule within optional time bounds.
@@ -693,7 +741,11 @@ async def _get_unconsumed_completions(
     ]
 
     if window_start is None and window_end is not None:
-        conditions.append(_upstream_occurrence_on_or_before_anchor(window_end))
+        conditions.append(
+            _upstream_occurrence_qualifies_sql(
+                window_end, downstream_local_date, upstream
+            )
+        )
     else:
         if window_start:
             conditions.append(TaskCompletion.completed_at >= window_start)
