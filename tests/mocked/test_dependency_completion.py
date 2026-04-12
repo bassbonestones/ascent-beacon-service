@@ -5,8 +5,8 @@ Tests the dependency_service functions and the integration of dependency
 checking into the complete, skip, and reopen endpoints.
 """
 import pytest
-from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock
+from datetime import datetime, timedelta, timezone
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 from app.core.time import utc_now
@@ -21,6 +21,36 @@ from app.schemas.dependency import (
 # ===========================================================================
 # Pure Function Tests - DependencyStatusResponse
 # ===========================================================================
+
+
+class TestWithinWindowAnchorEnd:
+    """within_window_anchor_end caps occurrence time with wall-clock now."""
+
+    def test_future_occurrence_uses_now(self) -> None:
+        from app.services.dependency_service import within_window_anchor_end
+
+        future = datetime(2030, 6, 1, 23, 0, 0, tzinfo=timezone.utc)
+        now = datetime(2030, 6, 1, 15, 0, 0, tzinfo=timezone.utc)
+        with patch("app.services.dependency_service.utc_now", return_value=now):
+            assert within_window_anchor_end(future) == now
+
+    def test_past_occurrence_uses_occurrence(self) -> None:
+        from app.services.dependency_service import within_window_anchor_end
+
+        past = datetime(2030, 6, 1, 10, 0, 0, tzinfo=timezone.utc)
+        now = datetime(2030, 6, 1, 18, 0, 0, tzinfo=timezone.utc)
+        with patch("app.services.dependency_service.utc_now", return_value=now):
+            assert within_window_anchor_end(past) == past
+
+    def test_naive_scheduled_assumes_utc(self) -> None:
+        from app.services.dependency_service import within_window_anchor_end
+
+        naive_noon = datetime(2030, 6, 1, 12, 0, 0)
+        now = datetime(2030, 6, 1, 18, 0, 0, tzinfo=timezone.utc)
+        with patch("app.services.dependency_service.utc_now", return_value=now):
+            assert within_window_anchor_end(naive_noon) == datetime(
+                2030, 6, 1, 12, 0, 0, tzinfo=timezone.utc
+            )
 
 
 class TestDependencyStatusComputation:
@@ -403,42 +433,11 @@ class TestCountQualifyingCompletions:
         assert result == 0
 
 
-class TestEffectiveWithinWindowMinutes:
-    """_effective_within_window_minutes: N>1 uses at least 24h lookback."""
-
-    def test_count_one_preserves_short_window(self) -> None:
-        from app.services.dependency_service import _effective_within_window_minutes
-
-        class R:
-            required_occurrence_count = 1
-
-        assert _effective_within_window_minutes(R(), 60) == 60
-        assert _effective_within_window_minutes(R(), 840) == 840
-
-    def test_count_gt_one_raises_floor_below_24h(self) -> None:
-        from app.services.dependency_service import _effective_within_window_minutes
-
-        class R:
-            required_occurrence_count = 4
-
-        assert _effective_within_window_minutes(R(), 840) == 1440
-        assert _effective_within_window_minutes(R(), 1439) == 1440
-
-    def test_count_gt_one_keeps_window_at_or_above_24h(self) -> None:
-        from app.services.dependency_service import _effective_within_window_minutes
-
-        class R:
-            required_occurrence_count = 3
-
-        assert _effective_within_window_minutes(R(), 1440) == 1440
-        assert _effective_within_window_minutes(R(), 2880) == 2880
-
-
 class TestResolveRuleValidityWindowMinutes:
-    """resolve_rule_validity_window_minutes consolidates defaults + N>1 floor."""
+    """resolve_rule_validity_window_minutes matches stated resolution (no N>1 floor)."""
 
     @pytest.mark.asyncio
-    async def test_explicit_minutes_applies_count_floor(self) -> None:
+    async def test_explicit_minutes_multi_count_unchanged(self) -> None:
         from app.services.dependency_service import resolve_rule_validity_window_minutes
 
         class Rule:
@@ -448,7 +447,7 @@ class TestResolveRuleValidityWindowMinutes:
 
         mock_db = AsyncMock()
         out = await resolve_rule_validity_window_minutes(mock_db, Rule())  # type: ignore[arg-type]
-        assert out == 1440
+        assert out == 840
         mock_db.execute.assert_not_called()
 
     @pytest.mark.asyncio
@@ -536,6 +535,46 @@ class TestResolveNextOccurrenceEarlyBreak:
 
 class TestResolveWithinWindow:
     """Test _resolve_within_window edge cases."""
+
+    @pytest.mark.asyncio
+    async def test_short_window_counts_completions_before_now_when_anchor_is_eod(
+        self,
+    ) -> None:
+        """Far-future occurrence anchor caps with now so 'last 1 minute' is wall-clock."""
+        from unittest.mock import patch
+
+        from app.services.dependency_service import _resolve_within_window
+
+        fixed_now = datetime(2026, 4, 12, 15, 0, 0, tzinfo=timezone.utc)
+        eod = datetime(2026, 4, 12, 23, 59, 59, 999000, tzinfo=timezone.utc)
+
+        mock_rule = MagicMock()
+        mock_rule.validity_window_minutes = 1
+        mock_rule.upstream_task_id = str(uuid4())
+        mock_rule.id = str(uuid4())
+
+        comp = MagicMock()
+        comp.id = "c1"
+        comp.completed_at = fixed_now - timedelta(seconds=5)
+
+        completion_result = MagicMock()
+        completion_result.scalars.return_value.all.return_value = [comp]
+        consumed_result = MagicMock()
+        consumed_result.scalars.return_value.all.return_value = []
+
+        mock_db = AsyncMock()
+        mock_db.execute.side_effect = [completion_result, consumed_result]
+
+        with patch("app.services.dependency_service.utc_now", return_value=fixed_now):
+            with patch(
+                "app.services.dependency_service.resolve_rule_validity_window_minutes",
+                new_callable=AsyncMock,
+                return_value=1,
+            ):
+                count = await _resolve_within_window(
+                    mock_db, mock_rule, eod, completion_statuses=("completed",)
+                )
+        assert count == 1
     
     @pytest.mark.asyncio
     async def test_returns_zero_without_scheduled_for(self) -> None:

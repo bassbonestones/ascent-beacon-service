@@ -24,6 +24,7 @@ from app.services.dependency_service import (
     _count_qualifying_completions,
     get_upstream_recurrence_interval_minutes,
     resolve_rule_validity_window_minutes,
+    within_window_anchor_end,
 )
 
 
@@ -52,10 +53,11 @@ async def _within_window_bounds(
     rule: DependencyRule,
     downstream_anchor: datetime,
 ) -> tuple[datetime, datetime]:
-    """Window [start, end) for within_window scope (end = downstream occurrence)."""
+    """Window [start, end) for within_window (end = min(occurrence, now))."""
     window_minutes = await resolve_rule_validity_window_minutes(db, rule)
-    window_start = downstream_anchor - timedelta(minutes=window_minutes)
-    return window_start, downstream_anchor
+    anchor_end = within_window_anchor_end(downstream_anchor)
+    window_start = anchor_end - timedelta(minutes=window_minutes)
+    return window_start, anchor_end
 
 
 async def _count_upstream_actions_in_window(

@@ -189,6 +189,13 @@ class DependencyBlocker(BaseModel):
     required_count: int
     completed_count: int
     is_met: bool
+    validity_window_minutes: int | None = Field(
+        default=None,
+        description=(
+            "For within_window: resolved lookback in minutes (explicit rule value or "
+            "upstream recurrence default). Null when scope is not within_window."
+        ),
+    )
 
     @property
     def progress_pct(self) -> int:

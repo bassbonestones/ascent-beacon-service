@@ -4,7 +4,7 @@ Dependency resolution service for Phase 4i.
 Implements occurrence-based dependency checking and resolution.
 Core logic for determining if a task's dependencies are met.
 """
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import select, and_, delete, func, or_
@@ -52,6 +52,21 @@ def _select_consumed_upstream_completion_ids(rule_id: str) -> Select[Any]:
     )
 
 
+def within_window_anchor_end(downstream_scheduled_for: datetime) -> datetime:
+    """
+    Right edge of the within_window interval [start, end).
+
+    Uses ``min(downstream occurrence, now)`` so a far-future anchor (e.g. mobile
+    passes end-of-day for an untimed daily task) does not force a short window to
+    sit only before midnight — the last W minutes are relative to wall time when
+    completing earlier the same day.
+    """
+    anchor = downstream_scheduled_for
+    if anchor.tzinfo is None:
+        anchor = anchor.replace(tzinfo=timezone.utc)
+    return min(anchor, utc_now())
+
+
 def _upstream_occurrence_on_or_before_anchor(
     anchor_time: datetime,
 ) -> ColumnElement[bool]:
@@ -69,26 +84,11 @@ def _upstream_occurrence_on_or_before_anchor(
     )
 
 
-def _effective_within_window_minutes(rule: DependencyRule, window_minutes: int) -> int:
-    """
-    For count-based rules (N>1), enforce at least a 24h lookback.
-
-    Short configured windows (e.g. 14h) before an end-of-day downstream anchor
-    often exclude same-calendar-day upstream completions (morning water vs 23:59
-    gym), yielding 0/N in the UI. Single-count rules keep the exact span (e.g.
-    60m warmup before a timed workout).
-    """
-    req = getattr(rule, "required_occurrence_count", 1)
-    if isinstance(req, int) and req > 1 and window_minutes < 1440:
-        return 1440
-    return window_minutes
-
-
-async def resolve_rule_validity_window_minutes(
+async def resolve_stated_validity_window_minutes(
     db: AsyncSession,
     rule: DependencyRule,
 ) -> int:
-    """Resolve validity window in minutes (explicit, upstream default, then N>1 floor)."""
+    """Configured validity window: explicit minutes, else upstream recurrence default, else 1440."""
     window_minutes = rule.validity_window_minutes
     if window_minutes is None:
         upstream_stmt = select(Task).where(Task.id == rule.upstream_task_id)
@@ -98,7 +98,15 @@ async def resolve_rule_validity_window_minutes(
             window_minutes = await get_upstream_recurrence_interval_minutes(upstream_task)
         else:
             window_minutes = 1440
-    return _effective_within_window_minutes(rule, window_minutes)
+    return window_minutes
+
+
+async def resolve_rule_validity_window_minutes(
+    db: AsyncSession,
+    rule: DependencyRule,
+) -> int:
+    """Validity window in minutes for counting (same as configured / stated resolution)."""
+    return await resolve_stated_validity_window_minutes(db, rule)
 
 
 async def get_upstream_recurrence_interval_minutes(task: Task) -> int:
@@ -164,23 +172,32 @@ async def check_dependencies(
         )
 
         is_met = completed_count >= rule.required_occurrence_count
-        
+
+        validity_window_minutes: int | None = None
+        if rule.scope == "within_window":
+            validity_window_minutes = await resolve_stated_validity_window_minutes(
+                db, rule
+            )
+
         upstream_info = TaskInfo(
             id=rule.upstream_task.id,
             title=rule.upstream_task.title,
             is_recurring=rule.upstream_task.is_recurring,
             recurrence_rule=rule.upstream_task.recurrence_rule,
         )
-        
-        blockers.append(DependencyBlocker(
-            rule_id=rule.id,
-            upstream_task=upstream_info,
-            strength=rule.strength,
-            scope=rule.scope,
-            required_count=rule.required_occurrence_count,
-            completed_count=completed_count,
-            is_met=is_met,
-        ))
+
+        blockers.append(
+            DependencyBlocker(
+                rule_id=rule.id,
+                upstream_task=upstream_info,
+                strength=rule.strength,
+                scope=rule.scope,
+                required_count=rule.required_occurrence_count,
+                completed_count=completed_count,
+                is_met=is_met,
+                validity_window_minutes=validity_window_minutes,
+            )
+        )
     
     # Get dependents (what relies on this task)
     dependents_stmt = (
@@ -378,16 +395,20 @@ async def _resolve_within_window(
 ) -> int:
     """
     Count upstream completions within the validity window.
-    
-    Window is anchored to downstream occurrence time, not wall-clock NOW().
+
+    Window is [anchor_end - W, anchor_end) where anchor_end is
+    ``min(downstream_scheduled_for, utc_now())`` so short windows stay meaningful
+    when the client passes a far-future occurrence (e.g. end-of-day for an
+    untimed daily task).
     """
     if not downstream_scheduled_for:
         return 0
 
     window_minutes = await resolve_rule_validity_window_minutes(db, rule)
 
-    window_start = downstream_scheduled_for - timedelta(minutes=window_minutes)
-    
+    anchor_end = within_window_anchor_end(downstream_scheduled_for)
+    window_start = anchor_end - timedelta(minutes=window_minutes)
+
     # Find completions within window
     completions_stmt = (
         select(TaskCompletion)
@@ -395,7 +416,7 @@ async def _resolve_within_window(
             TaskCompletion.task_id == rule.upstream_task_id,
             TaskCompletion.status.in_(completion_statuses),
             TaskCompletion.completed_at >= window_start,
-            TaskCompletion.completed_at < downstream_scheduled_for,
+            TaskCompletion.completed_at < anchor_end,
         )
         .order_by(TaskCompletion.completed_at.desc())
     )
@@ -562,11 +583,13 @@ async def get_qualifying_upstream_ids(
     elif rule.scope == "within_window":
         window_minutes = await resolve_rule_validity_window_minutes(db, rule)
         if downstream_scheduled_for:
-            window_start = downstream_scheduled_for - timedelta(minutes=window_minutes)
+            anchor_end = within_window_anchor_end(downstream_scheduled_for)
+            window_start = anchor_end - timedelta(minutes=window_minutes)
         else:
             window_start = None
+            anchor_end = None
         completions = await _get_unconsumed_completions(
-            db, rule, window_start, downstream_scheduled_for, statuses
+            db, rule, window_start, anchor_end, statuses
         )
     else:
         completions = []
