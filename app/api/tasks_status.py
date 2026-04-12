@@ -378,37 +378,55 @@ async def reopen_task(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="scheduled_for is required to reopen a recurring task occurrence",
             )
-        
-        # Determine window size based on whether task has a specific scheduled time
-        # For tasks without scheduled_at (anytime tasks), use the whole day
-        # For tasks with scheduled_at, use a 2-minute window around the time
-        target_time = request.scheduled_for
-        if task.scheduled_at is None:
-            # No specific time: use day-wide window
-            window_start = target_time.replace(hour=0, minute=0, second=0, microsecond=0)
-            window_end = target_time.replace(hour=23, minute=59, second=59, microsecond=999999)
-        else:
-            # Specific time: use a narrow window (within same minute)
-            target_time = target_time.replace(second=0, microsecond=0)
-            window_start = target_time - timedelta(minutes=1)
-            window_end = target_time + timedelta(minutes=1)
-        
-        # Find and delete the completion record within the window
-        completion_stmt = (
-            select(TaskCompletion)
-            .where(
-                and_(
+
+        completion: TaskCompletion | None = None
+
+        # Date-only recurring: `scheduled_for` is often end-of-local-day as UTC; building a
+        # "calendar day" window from that instant uses UTC midnight–end, which can miss the
+        # stored row. `local_date` matches complete/skip and is the stable occurrence key.
+        if task.scheduled_at is None and request.local_date:
+            local_stmt = (
+                select(TaskCompletion)
+                .where(
                     TaskCompletion.task_id == task.id,
-                    TaskCompletion.scheduled_for >= window_start,
-                    TaskCompletion.scheduled_for <= window_end,
+                    TaskCompletion.local_date == request.local_date,
                 )
+                .order_by(TaskCompletion.completed_at.desc())
+                .limit(1)
             )
-            .order_by(TaskCompletion.completed_at.desc())
-            .limit(1)
-        )
-        result = await db.execute(completion_stmt)
-        completion = result.scalar_one_or_none()
-        
+            result = await db.execute(local_stmt)
+            completion = result.scalar_one_or_none()
+
+        if not completion:
+            # Timed recurring, or legacy rows without local_date, or missing local_date request
+            target_time = request.scheduled_for
+            if task.scheduled_at is None:
+                window_start = target_time.replace(
+                    hour=0, minute=0, second=0, microsecond=0
+                )
+                window_end = target_time.replace(
+                    hour=23, minute=59, second=59, microsecond=999999
+                )
+            else:
+                target_time = target_time.replace(second=0, microsecond=0)
+                window_start = target_time - timedelta(minutes=1)
+                window_end = target_time + timedelta(minutes=1)
+
+            completion_stmt = (
+                select(TaskCompletion)
+                .where(
+                    and_(
+                        TaskCompletion.task_id == task.id,
+                        TaskCompletion.scheduled_for >= window_start,
+                        TaskCompletion.scheduled_for <= window_end,
+                    )
+                )
+                .order_by(TaskCompletion.completed_at.desc())
+                .limit(1)
+            )
+            result = await db.execute(completion_stmt)
+            completion = result.scalar_one_or_none()
+
         if not completion:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,

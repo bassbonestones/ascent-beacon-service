@@ -2662,6 +2662,40 @@ async def test_reopen_recurring_task_occurrence(client: AsyncClient):
     assert reopen_response.status_code == 200
 
 
+@pytest.mark.asyncio
+async def test_reopen_date_only_recurring_uses_local_date(client: AsyncClient):
+    """Date-only recurring reopen matches TaskCompletion by local_date (stable day key)."""
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    eod = datetime.now(timezone.utc).replace(
+        hour=23, minute=59, second=59, microsecond=999000
+    ).isoformat()
+
+    task_response = await client.post(
+        "/tasks",
+        json={
+            "title": "Date only reopen",
+            "is_recurring": True,
+            "recurrence_rule": "FREQ=DAILY",
+            "scheduling_mode": "date_only",
+            "recurrence_behavior": "habitual",
+        },
+    )
+    assert task_response.status_code == 201
+    task_id = task_response.json()["id"]
+
+    complete_response = await client.post(
+        f"/tasks/{task_id}/complete",
+        json={"scheduled_for": eod, "local_date": today},
+    )
+    assert complete_response.status_code == 200
+
+    reopen_response = await client.post(
+        f"/tasks/{task_id}/reopen",
+        json={"scheduled_for": eod, "local_date": today},
+    )
+    assert reopen_response.status_code == 200
+
+
 # ============================================================================
 # Skip Recurring Task Tests
 # ============================================================================
