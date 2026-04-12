@@ -138,6 +138,35 @@ class TestCompletionMatchesNextOccurrencePeriod:
             t, anchor, c, downstream_local_date="2026-04-12"
         )
 
+    def test_one_time_upstream_rejects_without_completion_local_date(
+        self,
+    ) -> None:
+        """NDAY / non-daily: strict path returns False when completion has no local_date."""
+        upstream = _task(is_recurring=False, recurrence_rule=None)
+        anchor = datetime(2026, 4, 12, 10, 0, 0, tzinfo=timezone.utc)
+        c = _completion(
+            scheduled_for=datetime(2026, 4, 12, 8, 0, 0, tzinfo=timezone.utc),
+            completed_at=datetime(2026, 4, 12, 8, 1, 0, tzinfo=timezone.utc),
+            local_date=None,
+        )
+        assert not completion_matches_next_occurrence_period(
+            upstream, anchor, c, downstream_local_date="2026-04-12"
+        )
+
+    def test_recurring_upstream_without_rule_rejects_without_completion_local_date(
+        self,
+    ) -> None:
+        upstream = _task(is_recurring=True, recurrence_rule=None)
+        anchor = datetime(2026, 4, 12, 10, 0, 0, tzinfo=timezone.utc)
+        c = _completion(
+            scheduled_for=datetime(2026, 4, 12, 8, 0, 0, tzinfo=timezone.utc),
+            completed_at=datetime(2026, 4, 12, 8, 1, 0, tzinfo=timezone.utc),
+            local_date=None,
+        )
+        assert not completion_matches_next_occurrence_period(
+            upstream, anchor, c, downstream_local_date="2026-04-12"
+        )
+
     def test_lawn_weekly_mow_old_week_does_not_match(self) -> None:
         mow = _task(is_recurring=True, recurrence_rule="FREQ=WEEKLY;BYDAY=SA")
         anchor = datetime(2026, 4, 25, 10, 0, 0, tzinfo=timezone.utc)  # seeding week

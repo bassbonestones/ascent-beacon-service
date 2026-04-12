@@ -1141,7 +1141,7 @@ class TestTaskListDependencySummary:
         assert dep_resp.status_code == 201
 
         list_resp = await client.get(
-            f"/tasks?client_today={day}&include_dependency_summary=true&status=pending",
+            f"/tasks?client_today={day}&include_dependency_summary=true&status=pending&days_ahead=14",
             headers=auth_headers,
         )
         assert list_resp.status_code == 200
@@ -1151,6 +1151,11 @@ class TestTaskListDependencySummary:
         assert down["dependency_summary"]["readiness_state"] == "blocked"
         assert down["dependency_summary"]["has_unmet_hard"] is True
         assert down["dependency_summary"]["has_unmet_soft"] is False
+        by_date = down.get("dependency_summaries_by_local_date") or {}
+        assert day in by_date
+        assert by_date[day]["has_unmet_hard"] is True
+        next_day = "2030-06-11"
+        assert next_day in by_date
 
         up = next(t for t in tasks if t["id"] == upstream_id)
         assert up.get("dependency_summary") is None

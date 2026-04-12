@@ -51,6 +51,8 @@ def task_to_response(
     skip_reason_today: str | None = None,
     skip_reasons_by_date: dict[str, str | None] | None = None,
     dependency_summary: TaskDependencySummary | None = None,
+    dependency_summaries_by_local_date: dict[str, TaskDependencySummary]
+    | None = None,
 ) -> TaskResponse:
     """Convert Task model to response schema.
     
@@ -111,6 +113,7 @@ def task_to_response(
         skip_reason_today=skip_reason_today if task.is_recurring else None,
         skip_reasons_by_date=skip_reasons_by_date or {} if task.is_recurring else {},
         dependency_summary=dependency_summary,
+        dependency_summaries_by_local_date=dependency_summaries_by_local_date,
     )
 
 

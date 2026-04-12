@@ -167,6 +167,8 @@ class TaskResponse(BaseModel):
 
     # Phase 4i-5: Optional; populated when list/detail requests dependency summary
     dependency_summary: TaskDependencySummary | None = None
+    # Per local calendar day (YYYY-MM-DD) for Upcoming / virtual rows; list only
+    dependency_summaries_by_local_date: dict[str, TaskDependencySummary] | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

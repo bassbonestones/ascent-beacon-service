@@ -3,7 +3,7 @@ Build compact dependency summaries for task list/detail responses (Phase 4i-5).
 
 Avoids N+1 mobile calls to GET /tasks/{id}/dependency-status for card badges.
 """
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, timedelta, time, timezone
 from typing import TYPE_CHECKING
 
 from sqlalchemy import and_, func, or_, select
@@ -130,17 +130,47 @@ async def build_task_dependency_summary(
     )
 
 
+async def build_summaries_by_task_and_dates(
+    db: AsyncSession,
+    user_id: str,
+    tasks: list["Task"],
+    client_today_str: str,
+    days_ahead: int,
+    days_back: int = 7,
+) -> dict[str, dict[str, TaskDependencySummary]]:
+    """
+    For each downstream task, map local_date (YYYY-MM-DD) -> summary.
+
+    Dates span ``client_today - days_back`` through ``client_today + days_ahead``
+    inclusive (overdue + today + upcoming virtual rows).
+    """
+    downstream_ids = await downstream_task_ids_with_rules(db, user_id)
+    start = datetime.strptime(client_today_str, "%Y-%m-%d").date()
+    date_strings: list[str] = []
+    for i in range(-max(0, days_back), max(0, days_ahead) + 1):
+        date_strings.append((start + timedelta(days=i)).isoformat())
+
+    out: dict[str, dict[str, TaskDependencySummary]] = {}
+    for t in tasks:
+        if t.id not in downstream_ids:
+            continue
+        per_date: dict[str, TaskDependencySummary] = {}
+        for ds in date_strings:
+            per_date[ds] = await build_task_dependency_summary(
+                db, user_id, t, ds
+            )
+        out[t.id] = per_date
+    return out
+
+
 async def build_summaries_for_tasks(
     db: AsyncSession,
     user_id: str,
     tasks: list["Task"],
     client_today_str: str,
 ) -> dict[str, TaskDependencySummary]:
-    """Batch summaries for list responses; only tasks with downstream rules."""
-    downstream_ids = await downstream_task_ids_with_rules(db, user_id)
-    out: dict[str, TaskDependencySummary] = {}
-    for t in tasks:
-        if t.id not in downstream_ids:
-            continue
-        out[t.id] = await build_task_dependency_summary(db, user_id, t, client_today_str)
-    return out
+    """Batch summaries for list responses; only tasks with downstream rules (today only)."""
+    by_task = await build_summaries_by_task_and_dates(
+        db, user_id, tasks, client_today_str, 0, days_back=0
+    )
+    return {tid: per[client_today_str] for tid, per in by_task.items()}
