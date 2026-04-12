@@ -105,7 +105,9 @@ async def build_task_dependency_summary(
     scheduled_for = _occurrence_scheduled_for(
         task, datetime.strptime(client_today_str, "%Y-%m-%d").date()
     )
-    status = await check_dependencies(db, task.id, user_id, scheduled_for)
+    status = await check_dependencies(
+        db, task.id, user_id, scheduled_for, client_today_str
+    )
 
     advisory_parts: list[str] = []
     for blocker in status.dependencies:

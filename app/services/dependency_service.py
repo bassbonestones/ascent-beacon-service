@@ -16,6 +16,9 @@ from app.core.time import utc_now
 from app.models.dependency import DependencyRule, DependencyResolution
 from app.models.task import Task
 from app.models.task_completion import TaskCompletion
+from app.services.dependency_recurrence_period import (
+    filter_completions_next_occurrence_period,
+)
 from app.schemas.dependency import (
     DependencyBlocker,
     DependencyDependent,
@@ -50,6 +53,16 @@ def _select_consumed_upstream_completion_ids(rule_id: str) -> Select[Any]:
             DependencyResolution.upstream_completion_id.isnot(None),
         )
     )
+
+
+async def _load_upstream_task(db: AsyncSession, rule: DependencyRule) -> Task | None:
+    """Prerequisite task row for Rule B period keys.
+
+    Always query; do not read ``rule.upstream_task`` (lazy load breaks async sessions).
+    """
+    stmt = select(Task).where(Task.id == rule.upstream_task_id)
+    res = await db.execute(stmt)
+    return res.scalar_one_or_none()
 
 
 def within_window_anchor_end(downstream_scheduled_for: datetime) -> datetime:
@@ -140,6 +153,7 @@ async def check_dependencies(
     task_id: str,
     user_id: str,
     scheduled_for: datetime | None = None,
+    local_date: str | None = None,
 ) -> DependencyStatusResponse:
     """
     Check all dependencies for a task occurrence.
@@ -168,7 +182,11 @@ async def check_dependencies(
         )
         # Count qualifying upstream completions (hard: skip counts; soft: complete only)
         completed_count = await _count_qualifying_completions(
-            db, rule, scheduled_for, completion_statuses=statuses
+            db,
+            rule,
+            scheduled_for,
+            completion_statuses=statuses,
+            downstream_local_date=local_date,
         )
 
         is_met = completed_count >= rule.required_occurrence_count
@@ -238,6 +256,7 @@ async def get_transitive_unmet_hard_prerequisites(
     task_id: str,
     user_id: str,
     scheduled_for: datetime | None = None,
+    local_date: str | None = None,
     depth: int = 0,
     visited: set[str] | None = None,
 ) -> list[DependencyBlocker]:
@@ -255,7 +274,7 @@ async def get_transitive_unmet_hard_prerequisites(
         return []
     visited.add(task_id)
 
-    status = await check_dependencies(db, task_id, user_id, scheduled_for)
+    status = await check_dependencies(db, task_id, user_id, scheduled_for, local_date)
     result: list[DependencyBlocker] = []
 
     for blocker in status.dependencies:
@@ -266,6 +285,7 @@ async def get_transitive_unmet_hard_prerequisites(
             blocker.upstream_task.id,
             user_id,
             scheduled_for,
+            local_date,
             depth + 1,
             visited,
         )
@@ -280,6 +300,7 @@ async def _count_qualifying_completions(
     rule: DependencyRule,
     downstream_scheduled_for: datetime | None,
     *,
+    downstream_local_date: str | None = None,
     completion_statuses: tuple[str, ...],
 ) -> int:
     """
@@ -295,10 +316,20 @@ async def _count_qualifying_completions(
     - within_window: completions within validity window
     """
     if rule.scope == "all_occurrences":
-        return await _resolve_all_occurrences(db, rule, completion_statuses)
+        return await _resolve_all_occurrences(
+            db,
+            rule,
+            completion_statuses,
+            downstream_scheduled_for=downstream_scheduled_for,
+            downstream_local_date=downstream_local_date,
+        )
     elif rule.scope == "next_occurrence":
         return await _resolve_next_occurrence(
-            db, rule, downstream_scheduled_for, completion_statuses
+            db,
+            rule,
+            downstream_scheduled_for,
+            completion_statuses,
+            downstream_local_date=downstream_local_date,
         )
     elif rule.scope == "within_window":
         return await _resolve_within_window(
@@ -312,12 +343,18 @@ async def _resolve_all_occurrences(
     db: AsyncSession,
     rule: DependencyRule,
     completion_statuses: tuple[str, ...],
+    *,
+    downstream_scheduled_for: datetime | None = None,
+    downstream_local_date: str | None = None,
 ) -> int:
     """
-    Count all completed upstream occurrences (not consumed for this rule).
-    
-    For ALL_OCCURRENCES scope, we count all completions that haven't
-    been consumed by a previous downstream completion for this same rule.
+    Count completed upstream occurrences (not consumed for this rule) that qualify.
+
+    Unconsumed completions are filtered by **Rule B** (same recurrence period bucket
+    as this downstream anchor) when the upstream task row exists — same as
+    ``next_occurrence``. Without this, ``all_occurrences`` would count any prior
+    unconsumed upstream (e.g. yesterday's gym) against today's downstream, which
+    breaks daily habit pairing when users pick **Always required first** in the app.
     """
     # Find all completions for upstream task
     completions_stmt = (
@@ -328,13 +365,24 @@ async def _resolve_all_occurrences(
         )
     )
     result = await db.execute(completions_stmt)
-    all_completions = result.scalars().all()
+    all_completions = list(result.scalars().all())
 
     consumed_result = await db.execute(_select_consumed_upstream_completion_ids(rule.id))
     consumed_ids = set(consumed_result.scalars().all())
 
-    # Count unconsumed completions/skips
-    return sum(1 for c in all_completions if c.id not in consumed_ids)
+    unconsumed = [c for c in all_completions if c.id not in consumed_ids]
+
+    upstream = await _load_upstream_task(db, rule)
+    if upstream is not None:
+        anchor = downstream_scheduled_for or utc_now()
+        unconsumed = filter_completions_next_occurrence_period(
+            upstream,
+            anchor,
+            unconsumed,
+            downstream_local_date=downstream_local_date,
+        )
+
+    return len(unconsumed)
 
 
 async def _resolve_next_occurrence(
@@ -342,6 +390,8 @@ async def _resolve_next_occurrence(
     rule: DependencyRule,
     downstream_scheduled_for: datetime | None,
     completion_statuses: tuple[str, ...],
+    *,
+    downstream_local_date: str | None = None,
 ) -> int:
     """
     Check if there's an unconsumed upstream completion for NEXT_OCCURRENCE scope.
@@ -371,8 +421,17 @@ async def _resolve_next_occurrence(
         )
     )
     result = await db.execute(completions_stmt)
-    completions = result.scalars().all()
-    
+    completions = list(result.scalars().all())
+
+    upstream = await _load_upstream_task(db, rule)
+    if upstream is not None:
+        completions = filter_completions_next_occurrence_period(
+            upstream,
+            anchor_time,
+            completions,
+            downstream_local_date=downstream_local_date,
+        )
+
     consumed_result = await db.execute(_select_consumed_upstream_completion_ids(rule.id))
     consumed_ids = set(consumed_result.scalars().all())
 
@@ -503,6 +562,7 @@ async def get_transitive_blockers(
     task_id: str,
     user_id: str,
     scheduled_for: datetime | None = None,
+    local_date: str | None = None,
     depth: int = 0,
     visited: set[str] | None = None,
 ) -> list[dict[str, Any]]:
@@ -526,7 +586,7 @@ async def get_transitive_blockers(
     visited.add(task_id)
     
     # Get this task's direct blockers
-    status = await check_dependencies(db, task_id, user_id, scheduled_for)
+    status = await check_dependencies(db, task_id, user_id, scheduled_for, local_date)
     
     result: list[dict[str, Any]] = []
     
@@ -538,6 +598,7 @@ async def get_transitive_blockers(
                 blocker.upstream_task.id,
                 user_id,
                 scheduled_for,
+                local_date,
                 depth + 1,
                 visited,
             )
@@ -561,6 +622,7 @@ async def get_qualifying_upstream_ids(
     rule: DependencyRule,
     downstream_scheduled_for: datetime | None,
     required_count: int,
+    downstream_local_date: str | None = None,
 ) -> list[str]:
     """
     Get IDs of upstream completions that will be consumed for a resolution.
@@ -576,10 +638,28 @@ async def get_qualifying_upstream_ids(
         completions = await _get_unconsumed_completions(
             db, rule, None, None, statuses
         )
+        upstream = await _load_upstream_task(db, rule)
+        if upstream is not None:
+            anchor = downstream_scheduled_for or utc_now()
+            completions = filter_completions_next_occurrence_period(
+                upstream,
+                anchor,
+                completions,
+                downstream_local_date=downstream_local_date,
+            )
     elif rule.scope == "next_occurrence":
         completions = await _get_unconsumed_completions(
             db, rule, None, downstream_scheduled_for, statuses
         )
+        upstream = await _load_upstream_task(db, rule)
+        if upstream is not None:
+            anchor = downstream_scheduled_for or utc_now()
+            completions = filter_completions_next_occurrence_period(
+                upstream,
+                anchor,
+                completions,
+                downstream_local_date=downstream_local_date,
+            )
     elif rule.scope == "within_window":
         window_minutes = await resolve_rule_validity_window_minutes(db, rule)
         if downstream_scheduled_for:

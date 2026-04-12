@@ -3,7 +3,7 @@ Tasks Status API endpoints.
 
 Provides status change operations: complete, skip, and reopen tasks.
 """
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Annotated, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -48,6 +48,28 @@ from app.services.skip_dependency_service import (
 )
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
+
+
+def _effective_local_date_for_recurring_occurrence(
+    task: Task,
+    body_local_date: str | None,
+    scheduled_for: datetime | None,
+) -> str | None:
+    """
+    Calendar YYYY-MM-DD for this occurrence.
+
+    Prefer the client's ``local_date`` (required for Rule B with Time Machine / timezones).
+    If omitted for a recurring task, fall back to the UTC calendar date of ``scheduled_for``
+    (same convention as task list ``date_key`` when ``local_date`` is null on a row).
+    """
+    if body_local_date:
+        return body_local_date
+    if not task.is_recurring or scheduled_for is None:
+        return None
+    sf = scheduled_for
+    if sf.tzinfo is None:
+        sf = sf.replace(tzinfo=timezone.utc)
+    return sf.astimezone(timezone.utc).date().isoformat()
 
 
 async def _persist_task_skip(
@@ -121,9 +143,15 @@ async def complete_task(
     with override_reason.
     """
     task = await get_task_or_404(db, task_id, user.id)
-    
+
+    eff_local_date = _effective_local_date_for_recurring_occurrence(
+        task, request.local_date, request.scheduled_for
+    )
+
     # Phase 4i: Check dependencies
-    dep_status = await check_dependencies(db, task_id, user.id, request.scheduled_for)
+    dep_status = await check_dependencies(
+        db, task_id, user.id, request.scheduled_for, eff_local_date
+    )
     
     # Get unmet hard blockers
     unmet_hard = [b for b in dep_status.dependencies if b.strength == "hard" and not b.is_met]
@@ -156,7 +184,7 @@ async def complete_task(
             status="completed",
             completed_at=utc_now(),
             scheduled_for=request.scheduled_for,
-            local_date=request.local_date,
+            local_date=eff_local_date,
         )
         db.add(completion)
         await db.flush()  # Get the ID
@@ -179,7 +207,7 @@ async def complete_task(
             status="completed",
             completed_at=task.completed_at,
             scheduled_for=request.scheduled_for,
-            local_date=request.local_date,
+            local_date=eff_local_date,
         )
         db.add(completion)
         await db.flush()
@@ -198,7 +226,11 @@ async def complete_task(
             rule = result.scalar_one_or_none()
             if rule:
                 ids = await get_qualifying_upstream_ids(
-                    db, rule, request.scheduled_for, blocker.required_count
+                    db,
+                    rule,
+                    request.scheduled_for,
+                    blocker.required_count,
+                    eff_local_date,
                 )
                 upstream_ids[blocker.rule_id] = ids
         
@@ -484,6 +516,10 @@ async def get_dependency_status(
         default=None,
         description="For recurring tasks: which occurrence to check"
     ),
+    local_date: str | None = Query(
+        default=None,
+        description="Client local calendar date (YYYY-MM-DD) for Rule B period alignment",
+    ),
 ) -> DependencyStatusResponse:
     """
     Get dependency status for a task occurrence.
@@ -492,10 +528,15 @@ async def get_dependency_status(
     and the overall readiness state.
     Includes ``transitive_unmet_hard_prerequisites`` (topo order) for chained hard deps.
     """
-    await get_task_or_404(db, task_id, user.id)
-    base = await check_dependencies(db, task_id, user.id, scheduled_for)
+    task = await get_task_or_404(db, task_id, user.id)
+    eff_local_date = _effective_local_date_for_recurring_occurrence(
+        task, local_date, scheduled_for
+    )
+    base = await check_dependencies(
+        db, task_id, user.id, scheduled_for, eff_local_date
+    )
     transitive = await get_transitive_unmet_hard_prerequisites(
-        db, task_id, user.id, scheduled_for
+        db, task_id, user.id, scheduled_for, eff_local_date
     )
     return DependencyStatusResponse(
         task_id=base.task_id,
@@ -527,12 +568,16 @@ async def complete_task_chain(
     Returns list of all completed tasks in completion order.
     """
     from app.services.dependency_service import get_transitive_blockers
-    
+
     task = await get_task_or_404(db, task_id, user.id)
-    
+
+    eff_local_date = _effective_local_date_for_recurring_occurrence(
+        task, request.local_date, request.scheduled_for
+    )
+
     # Get all transitive blockers (already in topo order)
     transitive = await get_transitive_blockers(
-        db, task_id, user.id, request.scheduled_for
+        db, task_id, user.id, request.scheduled_for, eff_local_date
     )
     
     completed_tasks: list[TaskResponse] = []
@@ -548,7 +593,7 @@ async def complete_task_chain(
                 status="completed",
                 completed_at=utc_now(),
                 scheduled_for=request.scheduled_for,
-                local_date=request.local_date,
+                local_date=eff_local_date,
             )
             db.add(prereq_completion)
             await db.flush()
@@ -564,7 +609,7 @@ async def complete_task_chain(
                     status="completed",
                     completed_at=prereq_task.completed_at,
                     scheduled_for=request.scheduled_for,
-                    local_date=request.local_date,
+                    local_date=eff_local_date,
                 )
                 db.add(prereq_completion)
                 await db.flush()
@@ -580,7 +625,9 @@ async def complete_task_chain(
         )
     
     # Now complete the target task (dependencies should now be met)
-    dep_status = await check_dependencies(db, task_id, user.id, request.scheduled_for)
+    dep_status = await check_dependencies(
+        db, task_id, user.id, request.scheduled_for, eff_local_date
+    )
     
     # Complete target task
     target_completion: TaskCompletion | None = None
@@ -590,7 +637,7 @@ async def complete_task_chain(
             status="completed",
             completed_at=utc_now(),
             scheduled_for=request.scheduled_for,
-            local_date=request.local_date,
+            local_date=eff_local_date,
         )
         db.add(target_completion)
         await db.flush()
@@ -608,7 +655,7 @@ async def complete_task_chain(
             status="completed",
             completed_at=task.completed_at,
             scheduled_for=request.scheduled_for,
-            local_date=request.local_date,
+            local_date=eff_local_date,
         )
         db.add(target_completion)
         await db.flush()
@@ -624,7 +671,11 @@ async def complete_task_chain(
             rule = result.scalar_one_or_none()
             if rule:
                 ids = await get_qualifying_upstream_ids(
-                    db, rule, request.scheduled_for, blocker.required_count
+                    db,
+                    rule,
+                    request.scheduled_for,
+                    blocker.required_count,
+                    eff_local_date,
                 )
                 upstream_ids[blocker.rule_id] = ids
         

@@ -1149,6 +1149,36 @@ async def test_get_day_order_merges_overrides_and_permanent(client: AsyncClient,
     assert len(data.get("items", [])) >= 1
 
 
+@pytest.mark.asyncio
+async def test_get_day_order_skips_permanent_pref_when_daily_override_same_slot(
+    client: AsyncClient, recurring_tasks: list[str],
+) -> None:
+    """Permanent preference exists but daily override covers the same (task, index)."""
+    date = "2026-08-20"
+    tid = recurring_tasks[0]
+    await client.post(
+        "/tasks/reorder-occurrences",
+        json={
+            "date": date,
+            "occurrences": [{"task_id": tid, "occurrence_index": 0}],
+            "save_mode": "permanent",
+        },
+    )
+    await client.post(
+        "/tasks/reorder-occurrences",
+        json={
+            "date": date,
+            "occurrences": [{"task_id": tid, "occurrence_index": 0}],
+            "save_mode": "today",
+        },
+    )
+    response = await client.get("/tasks/occurrence-order", params={"date": date})
+    assert response.status_code == 200
+    data = response.json()
+    override_rows = [i for i in data.get("items", []) if i.get("is_override")]
+    assert len(override_rows) >= 1
+
+
 # ============================================================================
 # Additional Occurrence Ordering Edge Case Tests
 # ============================================================================

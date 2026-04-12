@@ -115,8 +115,10 @@ async def test_build_task_dependency_summary_soft_skipped(
         task_id: str,
         user_id: str,
         scheduled_for: datetime | None = None,
+        local_date: str | None = None,
     ) -> DependencyStatusResponse:
         assert task_id == "d1"
+        assert local_date == "2026-06-10"
         return status
 
     async def _fake_skipped(
@@ -197,6 +199,7 @@ async def test_build_task_dependency_summary_soft_not_completed(
         task_id: str,
         user_id: str,
         scheduled_for: datetime | None = None,
+        local_date: str | None = None,
     ) -> DependencyStatusResponse:
         return status
 
@@ -241,6 +244,7 @@ async def test_build_task_dependency_summary_hard_no_advisory(
         task_id: str,
         user_id: str,
         scheduled_for: datetime | None = None,
+        local_date: str | None = None,
     ) -> DependencyStatusResponse:
         return status
 

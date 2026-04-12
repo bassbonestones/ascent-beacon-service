@@ -196,6 +196,50 @@ class TestDependencyHelpersLogic:
         assert has_cycle is True
         assert path is not None
 
+    @pytest.mark.asyncio
+    async def test_detect_cycle_dfs_skips_revisited_node(self) -> None:
+        """A DFS branch that hits an already-visited node is pruned (no cycle)."""
+        from app.api.helpers.dependency_helpers import detect_cycle
+
+        r1 = Mock()
+        r1.upstream_task_id, r1.downstream_task_id = "q", "p"
+        r2 = Mock()
+        r2.upstream_task_id, r2.downstream_task_id = "p", "q"
+        r3 = Mock()
+        r3.upstream_task_id, r3.downstream_task_id = "q", "x"
+
+        mock_scalars = Mock()
+        mock_scalars.all.return_value = [r1, r2, r3]
+        mock_result = Mock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_db = AsyncMock()
+        mock_db.execute.return_value = mock_result
+
+        has_cycle, path = await detect_cycle(mock_db, "user-1", "p", "x")
+        assert has_cycle is False
+        assert path is None
+
+    @pytest.mark.asyncio
+    async def test_detect_cycle_two_rules_same_downstream(self) -> None:
+        """Two edges into the same downstream: second rule skips new adjacency key."""
+        from app.api.helpers.dependency_helpers import detect_cycle
+
+        r1 = Mock()
+        r1.upstream_task_id, r1.downstream_task_id = "a", "down"
+        r2 = Mock()
+        r2.upstream_task_id, r2.downstream_task_id = "b", "down"
+
+        mock_scalars = Mock()
+        mock_scalars.all.return_value = [r1, r2]
+        mock_result = Mock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_db = AsyncMock()
+        mock_db.execute.return_value = mock_result
+
+        has_cycle, path = await detect_cycle(mock_db, "user-1", "c", "x")
+        assert has_cycle is False
+        assert path is None
+
 
 # ============================================================================
 # Mocked Tests for task_stats logic
@@ -5304,6 +5348,27 @@ class TestUpdateGoalProgressBranches:
         mock_db.execute.side_effect = [mock_tasks_result, mock_goal_result]
         
         # Should not raise exception
+        await update_goal_progress(mock_db, "goal-123")
+
+    @pytest.mark.asyncio
+    async def test_update_goal_progress_goal_row_missing_with_tasks(self) -> None:
+        """Tasks exist but goal row is gone: no attribute updates (``if goal`` false)."""
+        from app.api.helpers.task_helpers import update_goal_progress
+
+        mock_db = AsyncMock()
+
+        mock_task = Mock()
+        mock_task.duration_minutes = 30
+        mock_task.status = "completed"
+
+        mock_tasks_result = Mock()
+        mock_tasks_result.scalars.return_value.all.return_value = [mock_task]
+
+        mock_goal_result = Mock()
+        mock_goal_result.scalar_one_or_none.return_value = None
+
+        mock_db.execute.side_effect = [mock_tasks_result, mock_goal_result]
+
         await update_goal_progress(mock_db, "goal-123")
 
     @pytest.mark.asyncio

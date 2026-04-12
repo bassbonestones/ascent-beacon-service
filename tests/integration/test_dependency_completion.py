@@ -5,7 +5,7 @@ Tests the complete endpoint's dependency checking, the complete-chain
 endpoint, and the dependency-status endpoint.
 """
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from httpx import AsyncClient
 
 from app.core.time import utc_now
@@ -14,6 +14,83 @@ from app.core.time import utc_now
 @pytest.mark.asyncio
 class TestDependencyBlocking:
     """Test that hard dependencies block completion."""
+
+    async def test_all_occurrences_daily_uses_rule_b_calendar_periods(
+        self, client: AsyncClient, auth_headers: dict[str, str]
+    ) -> None:
+        """Always-required-first (all_occurrences) still aligns periods for daily tasks."""
+        day1_eod = datetime(2026, 6, 10, 23, 59, 59, tzinfo=timezone.utc)
+        day2_morning = datetime(2026, 6, 11, 9, 0, 0, tzinfo=timezone.utc)
+
+        gym = await client.post(
+            "/tasks",
+            json={
+                "title": "Gym all-occ",
+                "is_recurring": True,
+                "recurrence_rule": "FREQ=DAILY",
+                "scheduling_mode": "date_only",
+                "recurrence_behavior": "essential",
+            },
+            headers=auth_headers,
+        )
+        assert gym.status_code == 201
+        protein = await client.post(
+            "/tasks",
+            json={
+                "title": "Protein all-occ",
+                "is_recurring": True,
+                "recurrence_rule": "FREQ=DAILY",
+                "scheduling_mode": "date_only",
+                "recurrence_behavior": "essential",
+            },
+            headers=auth_headers,
+        )
+        assert protein.status_code == 201
+        gid, pid = gym.json()["id"], protein.json()["id"]
+
+        dep = await client.post(
+            "/dependencies",
+            json={
+                "upstream_task_id": gid,
+                "downstream_task_id": pid,
+                "strength": "hard",
+                "scope": "all_occurrences",
+                "required_occurrence_count": 1,
+            },
+            headers=auth_headers,
+        )
+        assert dep.status_code == 201
+
+        cg = await client.post(
+            f"/tasks/{gid}/complete",
+            json={
+                "scheduled_for": day1_eod.isoformat(),
+                "local_date": "2026-06-10",
+            },
+            headers=auth_headers,
+        )
+        assert cg.status_code == 200, cg.text
+
+        st = await client.get(
+            f"/tasks/{pid}/dependency-status",
+            params={
+                "scheduled_for": day2_morning.isoformat(),
+                "local_date": "2026-06-11",
+            },
+            headers=auth_headers,
+        )
+        assert st.status_code == 200
+        assert st.json()["has_unmet_hard"] is True
+
+        cp = await client.post(
+            f"/tasks/{pid}/complete",
+            json={
+                "scheduled_for": day2_morning.isoformat(),
+                "local_date": "2026-06-11",
+            },
+            headers=auth_headers,
+        )
+        assert cp.status_code == 409, cp.text
     
     async def test_complete_blocked_by_hard_dependency(
         self, client: AsyncClient, auth_headers: dict[str, str]

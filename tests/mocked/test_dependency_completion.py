@@ -506,7 +506,11 @@ class TestResolveNextOccurrenceEarlyBreak:
 
     @pytest.mark.asyncio
     async def test_breaks_when_count_reached(self) -> None:
+        from unittest.mock import patch
+
         from app.services.dependency_service import _resolve_next_occurrence
+
+        anchor = datetime(2026, 6, 1, 15, 0, 0, tzinfo=timezone.utc)
 
         mock_rule = MagicMock()
         mock_rule.upstream_task_id = str(uuid4())
@@ -517,20 +521,67 @@ class TestResolveNextOccurrenceEarlyBreak:
         c1.id = "a"
         c2.id = "b"
         c3.id = "c"
+        for c in (c1, c2, c3):
+            c.scheduled_for = anchor
+            c.completed_at = anchor
+            c.local_date = None
 
         comp_result = MagicMock()
         comp_result.scalars.return_value.all.return_value = [c1, c2, c3]
+
+        ut = MagicMock()
+        ut.is_recurring = True
+        ut.recurrence_rule = "FREQ=DAILY"
+        task_result = MagicMock()
+        task_result.scalar_one_or_none.return_value = ut
 
         cons_result = MagicMock()
         cons_result.scalars.return_value.all.return_value = []
 
         mock_db = AsyncMock()
-        mock_db.execute.side_effect = [comp_result, cons_result]
+        mock_db.execute.side_effect = [comp_result, task_result, cons_result]
+
+        with patch("app.services.dependency_service.utc_now", return_value=anchor):
+            result = await _resolve_next_occurrence(
+                mock_db, mock_rule, anchor, ("completed",),
+            )
+        assert result == 2
+
+    @pytest.mark.asyncio
+    async def test_upstream_task_missing_skips_period_filter(self) -> None:
+        """No prerequisite row: Rule B filter skipped (branch ``upstream is None``)."""
+        from app.services.dependency_service import _resolve_next_occurrence
+
+        anchor = datetime(2026, 6, 1, 15, 0, 0, tzinfo=timezone.utc)
+        other_day = datetime(2026, 6, 10, 15, 0, 0, tzinfo=timezone.utc)
+
+        mock_rule = MagicMock()
+        mock_rule.upstream_task_id = str(uuid4())
+        mock_rule.required_occurrence_count = 1
+        mock_rule.id = str(uuid4())
+
+        c1 = MagicMock()
+        c1.id = "a"
+        c1.scheduled_for = other_day
+        c1.completed_at = other_day
+        c1.local_date = None
+
+        comp_result = MagicMock()
+        comp_result.scalars.return_value.all.return_value = [c1]
+
+        task_result = MagicMock()
+        task_result.scalar_one_or_none.return_value = None
+
+        cons_result = MagicMock()
+        cons_result.scalars.return_value.all.return_value = []
+
+        mock_db = AsyncMock()
+        mock_db.execute.side_effect = [comp_result, task_result, cons_result]
 
         result = await _resolve_next_occurrence(
-            mock_db, mock_rule, utc_now(), ("completed",),
+            mock_db, mock_rule, anchor, ("completed",),
         )
-        assert result == 2
+        assert result == 1
 
 
 class TestResolveWithinWindow:
@@ -686,6 +737,36 @@ class TestGetQualifyingUpstreamIds:
         # Call with no downstream_scheduled_for - hits line 443
         result = await get_qualifying_upstream_ids(mock_db, mock_rule, None, 1)
         assert result == []
+
+    @pytest.mark.asyncio
+    async def test_next_occurrence_upstream_missing_no_period_filter(self) -> None:
+        """``next_occurrence`` with missing Task row skips period filter."""
+        from app.services.dependency_service import get_qualifying_upstream_ids
+
+        mock_rule = MagicMock()
+        mock_rule.scope = "next_occurrence"
+        mock_rule.strength = "soft"
+        mock_rule.upstream_task_id = str(uuid4())
+        mock_rule.id = str(uuid4())
+
+        c1 = MagicMock()
+        c1.id = "u1"
+
+        comp_result = MagicMock()
+        comp_result.scalars.return_value.all.return_value = [c1]
+
+        cons_result = MagicMock()
+        cons_result.scalars.return_value.all.return_value = []
+
+        task_result = MagicMock()
+        task_result.scalar_one_or_none.return_value = None
+
+        mock_db = AsyncMock()
+        mock_db.execute.side_effect = [comp_result, cons_result, task_result]
+
+        anchor = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        result = await get_qualifying_upstream_ids(mock_db, mock_rule, anchor, 3)
+        assert result == ["u1"]
 
 
 @pytest.mark.asyncio

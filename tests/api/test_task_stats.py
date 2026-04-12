@@ -702,6 +702,49 @@ async def test_get_completion_history_multiple_days(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_get_completion_history_two_completions_same_calendar_day(client: AsyncClient):
+    """Second completion on same day appends to completions_by_date (branch merge)."""
+    goal_response = await client.post("/goals", json={"title": "Test Goal"})
+    goal_id = goal_response.json()["id"]
+
+    base_date = datetime.now(timezone.utc).replace(
+        hour=9, minute=0, second=0, microsecond=0
+    ) - timedelta(days=2)
+
+    task_response = await client.post(
+        "/tasks",
+        json={
+            "goal_id": goal_id,
+            "title": "Same-day history",
+            "duration_minutes": 5,
+            "scheduled_at": base_date.isoformat(),
+            "is_recurring": True,
+            "recurrence_rule": "FREQ=DAILY;INTERVAL=1",
+            "scheduling_mode": "floating",
+            "recurrence_behavior": "habitual",
+        },
+    )
+    assert task_response.status_code == 201
+    task_id = task_response.json()["id"]
+
+    for hour_offset in [0, 6]:
+        t = base_date + timedelta(hours=hour_offset)
+        await client.post(
+            f"/tasks/{task_id}/complete",
+            json={"scheduled_for": t.isoformat()},
+        )
+
+    start = quote((base_date - timedelta(days=1)).isoformat())
+    end = quote((base_date + timedelta(days=2)).isoformat())
+
+    response = await client.get(
+        f"/tasks/{task_id}/history?start={start}&end={end}"
+    )
+    assert response.status_code == 200
+    assert "days" in response.json()
+
+
+@pytest.mark.asyncio
 async def test_get_task_stats_with_specific_dates_scheduling(client: AsyncClient):
     """Test stats for task with specific_times scheduling mode."""
     goal_response = await client.post("/goals", json={"title": "Test Goal"})
