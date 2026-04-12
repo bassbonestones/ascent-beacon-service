@@ -1358,6 +1358,77 @@ class TestTaskListDependencySummary:
         assert by_after["1400"]["has_unmet_hard"] is True
         assert by_after["1900"]["has_unmet_hard"] is True
 
+    async def test_list_tasks_dependency_summary_daily_single_eod_after_utc_anchor(
+        self, client: AsyncClient, auth_headers: dict[str, str]
+    ) -> None:
+        """One-a-day FREQ=DAILY (single slot): upstream local EOD can be after UTC EOD.
+
+        List summaries use ``client_timezone`` (here UTC) for anchors. Mobile often
+        stores ``scheduled_for`` as local end-of-day in ISO (later in UTC). Without
+        same-calendar matching for ``single``+daily, SQL drops the row and the card
+        stays **Required first** even though Rule B periods match via ``local_date``.
+        """
+        day = "2030-09-02"
+        upstream_resp = await client.post(
+            "/tasks",
+            json={
+                "title": "Gym daily",
+                "is_recurring": True,
+                "recurrence_rule": "FREQ=DAILY",
+                "scheduling_mode": "date_only",
+                "recurrence_behavior": "essential",
+            },
+            headers=auth_headers,
+        )
+        assert upstream_resp.status_code == 201
+        upstream_id = upstream_resp.json()["id"]
+
+        downstream_resp = await client.post(
+            "/tasks",
+            json={
+                "title": "Protein daily",
+                "is_recurring": True,
+                "recurrence_rule": "FREQ=DAILY",
+                "scheduling_mode": "date_only",
+                "recurrence_behavior": "essential",
+            },
+            headers=auth_headers,
+        )
+        assert downstream_resp.status_code == 201
+        downstream_id = downstream_resp.json()["id"]
+
+        dep_resp = await client.post(
+            "/dependencies",
+            json={
+                "upstream_task_id": upstream_id,
+                "downstream_task_id": downstream_id,
+                "strength": "hard",
+                "scope": "next_occurrence",
+            },
+            headers=auth_headers,
+        )
+        assert dep_resp.status_code == 201
+
+        # Same local calendar day as ``day`` but after UTC midnight (LA end-of-day in Aug).
+        la_eod_same_local_day = "2030-09-03T06:59:59.999999+00:00"
+        complete_up = await client.post(
+            f"/tasks/{upstream_id}/complete",
+            json={"scheduled_for": la_eod_same_local_day, "local_date": day},
+            headers=auth_headers,
+        )
+        assert complete_up.status_code == 200
+
+        list_mid = await client.get(
+            f"/tasks?client_today={day}&include_dependency_summary=true"
+            f"&status=pending&days_ahead=14&client_timezone=UTC",
+            headers=auth_headers,
+        )
+        assert list_mid.status_code == 200
+        down_mid = next(t for t in list_mid.json()["tasks"] if t["id"] == downstream_id)
+        by_mid = down_mid["dependency_summaries_by_local_date"][day]
+        assert by_mid[""]["has_unmet_hard"] is False
+        assert by_mid[""]["readiness_state"] == "ready"
+
     async def test_get_task_include_dependency_summary(
         self, client: AsyncClient, auth_headers: dict[str, str]
     ) -> None:

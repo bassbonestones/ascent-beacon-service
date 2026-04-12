@@ -116,9 +116,19 @@ def _upstream_allows_same_local_calendar_day_sql(
     if not rr:
         return True
     mode = parse_intraday_rrule(rr).intraday_mode
-    # ``single`` (and interval/specific_times) use real slot times in ``scheduled_for``;
+    if mode in ("anytime", "window"):
+        return True
+    # One untimed daily slot (``single`` / default): ``scheduled_for`` is often local
+    # end-of-day as UTC, which can be *after* a downstream anchor built with another
+    # TZ (e.g. GET /tasks without ``client_timezone`` uses UTC EOD). Then
+    # ``scheduled_for <= anchor`` drops the row before Rule B runs. Allow the same
+    # ``local_date`` OR branch as anytime/window so list badges match complete preflight
+    # when both sides carry ``local_date`` (see ``_upstream_occurrence_qualifies_sql``).
+    if mode == "single" and "FREQ=DAILY" in rr.upper():
+        return True
+    # ``interval`` / ``specific_times`` use real slot times in ``scheduled_for``;
     # same-calendar OR would mis-count midday skips for morning downstream anchors.
-    return mode in ("anytime", "window")
+    return False
 
 
 def _upstream_occurrence_qualifies_sql(
