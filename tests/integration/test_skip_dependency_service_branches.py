@@ -2,7 +2,7 @@
 Branch coverage for skip_dependency_service (backend floor ≥97.01%).
 """
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 from uuid import uuid4
 
 import pytest
@@ -222,6 +222,171 @@ async def test_preview_monthly_downstream_occurrence_estimate(
     assert sk.status_code == 200
     row = sk.json()["affected_downstream"][0]
     assert row["affected_occurrences"] == 1
+
+
+@pytest.mark.asyncio
+async def test_task_eligible_recurring_naive_scheduled_for_normalizes_tz() -> None:
+    """Naive scheduled_for is normalized to UTC before day-window queries (line 122)."""
+    from app.services.skip_dependency_service import _task_eligible_for_hard_skip_cascade
+
+    task = Mock()
+    task.is_recurring = True
+    task.id = str(uuid4())
+    naive = datetime(2026, 4, 10, 14, 30, 0)
+
+    mock_db = AsyncMock()
+    count_result = Mock()
+    count_result.scalar_one.return_value = 0
+    mock_db.execute = AsyncMock(return_value=count_result)
+
+    out = await _task_eligible_for_hard_skip_cascade(mock_db, task, naive, None)
+    assert out is True
+
+
+@pytest.mark.asyncio
+async def test_evaluate_skip_skips_ineligible_downstream() -> None:
+    """Hard rule with downstream not eligible for cascade hits continue (line 242)."""
+    from app.core.time import utc_now
+    from app.services import skip_dependency_service as sds
+    from app.services.skip_dependency_service import evaluate_skip_hard_downstream_impact
+
+    mock_rule = MagicMock()
+    mock_rule.strength = "hard"
+    mock_rule.required_occurrence_count = 2
+    mock_rule.downstream_task = MagicMock()
+
+    mock_db = AsyncMock()
+    exec_result = MagicMock()
+    exec_result.scalars.return_value.all.return_value = [mock_rule]
+    mock_db.execute = AsyncMock(return_value=exec_result)
+
+    with patch.object(
+        sds,
+        "_task_eligible_for_hard_skip_cascade",
+        new_callable=AsyncMock,
+        return_value=False,
+    ):
+        result = await evaluate_skip_hard_downstream_impact(
+            mock_db, "u1", "user1", utc_now(), None
+        )
+    assert result.needs_confirmation is False
+    assert result.affected == []
+
+
+@pytest.mark.asyncio
+async def test_build_transitive_preview_drops_missing_task_row() -> None:
+    """Topo id with no Task row is skipped (lines 284–286)."""
+    from app.services import skip_dependency_service as sds
+    from app.services.skip_dependency_service import build_transitive_hard_dependent_preview_rows
+
+    ghost_id = str(uuid4())
+
+    async def fake_topo(*_a: object, **_k: object) -> list[str]:
+        return [ghost_id]
+
+    mock_db = AsyncMock()
+    empty_tasks = MagicMock()
+    empty_tasks.scalars.return_value.all.return_value = []
+    mock_db.execute = AsyncMock(return_value=empty_tasks)
+
+    with patch.object(
+        sds,
+        "get_transitive_hard_dependents_toposort",
+        new_callable=AsyncMock,
+        side_effect=fake_topo,
+    ):
+        out = await build_transitive_hard_dependent_preview_rows(
+            mock_db, "start", "user"
+        )
+    assert out == []
+
+
+@pytest.mark.asyncio
+async def test_build_transitive_preview_empty_topo_returns_empty() -> None:
+    """When topo sort yields no ids, early return (line 278)."""
+    from app.services import skip_dependency_service as sds
+    from app.services.skip_dependency_service import build_transitive_hard_dependent_preview_rows
+
+    mock_db = AsyncMock()
+    with patch.object(
+        sds,
+        "get_transitive_hard_dependents_toposort",
+        new_callable=AsyncMock,
+        return_value=[],
+    ):
+        out = await build_transitive_hard_dependent_preview_rows(
+            mock_db, "start", "user"
+        )
+    assert out == []
+    mock_db.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_get_transitive_filters_topo_id_without_task_row() -> None:
+    """Topo includes downstream id but Task SELECT returns no row (line 381)."""
+    from types import SimpleNamespace
+
+    from app.services.skip_dependency_service import get_transitive_hard_dependents_toposort
+
+    r = SimpleNamespace()
+    r.user_id = "u1"
+    r.upstream_task_id = "start"
+    r.downstream_task_id = "down"
+    r.strength = "hard"
+
+    rules_mr = MagicMock()
+    rules_mr.scalars.return_value.all.return_value = [r]
+
+    tasks_mr = MagicMock()
+    tasks_mr.scalars.return_value.all.return_value = []
+
+    mock_db = AsyncMock()
+    mock_db.execute = AsyncMock(side_effect=[rules_mr, tasks_mr])
+
+    out = await get_transitive_hard_dependents_toposort(mock_db, "start", "u1", None, None)
+    assert out == []
+
+
+@pytest.mark.asyncio
+async def test_get_transitive_subgraph_skips_back_edge_to_start(
+    client: AsyncClient, auth_headers: dict[str, str], db_session,
+) -> None:
+    """Edges from reachable nodes back to start are not in reachable (branch 354→353)."""
+    from app.services.skip_dependency_service import get_transitive_hard_dependents_toposort
+
+    a = await client.post("/tasks", json={"title": "Back A"}, headers=auth_headers)
+    b = await client.post("/tasks", json={"title": "Back B"}, headers=auth_headers)
+    assert a.status_code == b.status_code == 201
+    aid, bid = a.json()["id"], b.json()["id"]
+    user_id = a.json()["user_id"]
+
+    dep_ab = await client.post(
+        "/dependencies",
+        json={
+            "upstream_task_id": aid,
+            "downstream_task_id": bid,
+            "strength": "hard",
+            "scope": "next_occurrence",
+        },
+        headers=auth_headers,
+    )
+    assert dep_ab.status_code == 201
+
+    db_session.add(
+        DependencyRule(
+            user_id=user_id,
+            upstream_task_id=bid,
+            downstream_task_id=aid,
+            strength="hard",
+            scope="next_occurrence",
+            required_occurrence_count=1,
+            validity_window_minutes=None,
+        )
+    )
+    await db_session.commit()
+
+    out = await get_transitive_hard_dependents_toposort(db_session, aid, user_id, None, None)
+    assert bid in out
 
 
 @pytest.mark.asyncio

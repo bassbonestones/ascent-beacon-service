@@ -29,11 +29,22 @@ def test_occurrence_recurring_with_naive_scheduled_at() -> None:
     assert out.hour == 8 and out.minute == 15
 
 
+def test_occurrence_recurring_midnight_template_anchors_end_of_day() -> None:
+    """Midnight slot would make completed_at < 00:00 exclude same-day upstream."""
+    t = _RecurringTask()
+    t.scheduled_at = datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+    out = tds._occurrence_scheduled_for(t, date(2026, 6, 2))
+    assert out is not None
+    assert out.hour == 23 and out.minute == 59 and out.second == 59
+
+
 def test_occurrence_recurring_no_scheduled_at() -> None:
     t = _RecurringTask()
     t.scheduled_at = None
     out = tds._occurrence_scheduled_for(t, date(2026, 6, 2))
-    assert out == datetime.combine(date(2026, 6, 2), time.min, tzinfo=timezone.utc)
+    assert out == datetime.combine(
+        date(2026, 6, 2), time(23, 59, 59, 999999), tzinfo=timezone.utc
+    )
 
 
 def test_occurrence_one_time_wrong_day() -> None:
@@ -54,7 +65,9 @@ def test_occurrence_scheduled_date_match() -> None:
     t.scheduled_at = None
     t.scheduled_date = "2026-06-04"
     out = tds._occurrence_scheduled_for(t, date(2026, 6, 4))
-    assert out == datetime.combine(date(2026, 6, 4), time.min, tzinfo=timezone.utc)
+    assert out == datetime.combine(
+        date(2026, 6, 4), time(23, 59, 59, 999999), tzinfo=timezone.utc
+    )
 
 
 def test_occurrence_scheduled_date_invalid() -> None:
@@ -74,7 +87,9 @@ def test_occurrence_anytime_fallback() -> None:
     t.scheduled_at = None
     t.scheduled_date = None
     out = tds._occurrence_scheduled_for(t, date(2026, 6, 7))
-    assert out == datetime.combine(date(2026, 6, 7), time.min, tzinfo=timezone.utc)
+    assert out == datetime.combine(
+        date(2026, 6, 7), time(23, 59, 59, 999999), tzinfo=timezone.utc
+    )
 
 
 @pytest.mark.asyncio

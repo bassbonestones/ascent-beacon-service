@@ -2,6 +2,7 @@
 
 import pytest
 from datetime import timedelta
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.services.token_service import TokenService
 from app.models.user import User
@@ -64,6 +65,51 @@ async def test_refresh_access_token_success(db_session, test_user):
     assert "refresh_token" in new_tokens
     # New tokens should be different
     assert new_tokens["refresh_token"] != tokens["refresh_token"]
+
+
+@pytest.mark.asyncio
+async def test_refresh_access_token_user_not_found_mocked() -> None:
+    """Valid refresh row but missing User raises (lines 76–78)."""
+    rt_obj = MagicMock()
+    rt_obj.token_hash = "h"
+    rt_obj.user_id = "user-1"
+
+    exec_result = MagicMock()
+    exec_result.scalars.return_value.all.return_value = [rt_obj]
+
+    mock_db = AsyncMock()
+    mock_db.execute = AsyncMock(return_value=exec_result)
+    mock_db.get = AsyncMock(return_value=None)
+
+    with patch(
+        "app.services.token_service.verify_token_hash",
+        return_value=True,
+    ):
+        with pytest.raises(ValueError, match="User not found"):
+            await TokenService.refresh_access_token(mock_db, "raw-token")
+
+
+@pytest.mark.asyncio
+async def test_logout_finds_second_matching_hash() -> None:
+    """Logout loop skips non-matching rows before revoking (lines 118–122)."""
+    rt1 = MagicMock()
+    rt1.token_hash = "first"
+    rt2 = MagicMock()
+    rt2.token_hash = "second"
+
+    exec_result = MagicMock()
+    exec_result.scalars.return_value.all.return_value = [rt1, rt2]
+
+    mock_db = AsyncMock()
+    mock_db.execute = AsyncMock(return_value=exec_result)
+
+    with patch(
+        "app.services.token_service.verify_token_hash",
+        side_effect=[False, True],
+    ):
+        await TokenService.logout(mock_db, "presented")
+
+    assert rt2.revoked_at is not None
 
 
 @pytest.mark.asyncio

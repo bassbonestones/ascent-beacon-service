@@ -69,6 +69,38 @@ def _upstream_occurrence_on_or_before_anchor(
     )
 
 
+def _effective_within_window_minutes(rule: DependencyRule, window_minutes: int) -> int:
+    """
+    For count-based rules (N>1), enforce at least a 24h lookback.
+
+    Short configured windows (e.g. 14h) before an end-of-day downstream anchor
+    often exclude same-calendar-day upstream completions (morning water vs 23:59
+    gym), yielding 0/N in the UI. Single-count rules keep the exact span (e.g.
+    60m warmup before a timed workout).
+    """
+    req = getattr(rule, "required_occurrence_count", 1)
+    if isinstance(req, int) and req > 1 and window_minutes < 1440:
+        return 1440
+    return window_minutes
+
+
+async def resolve_rule_validity_window_minutes(
+    db: AsyncSession,
+    rule: DependencyRule,
+) -> int:
+    """Resolve validity window in minutes (explicit, upstream default, then N>1 floor)."""
+    window_minutes = rule.validity_window_minutes
+    if window_minutes is None:
+        upstream_stmt = select(Task).where(Task.id == rule.upstream_task_id)
+        upstream_result = await db.execute(upstream_stmt)
+        upstream_task = upstream_result.scalar_one_or_none()
+        if upstream_task:
+            window_minutes = await get_upstream_recurrence_interval_minutes(upstream_task)
+        else:
+            window_minutes = 1440
+    return _effective_within_window_minutes(rule, window_minutes)
+
+
 async def get_upstream_recurrence_interval_minutes(task: Task) -> int:
     """
     Get the recurrence interval of a task in minutes.
@@ -351,19 +383,9 @@ async def _resolve_within_window(
     """
     if not downstream_scheduled_for:
         return 0
-    
-    # Get validity window (default to upstream recurrence interval)
-    window_minutes = rule.validity_window_minutes
-    if window_minutes is None:
-        # Load upstream task to get recurrence interval
-        upstream_stmt = select(Task).where(Task.id == rule.upstream_task_id)
-        upstream_result = await db.execute(upstream_stmt)
-        upstream_task = upstream_result.scalar_one_or_none()
-        if upstream_task:
-            window_minutes = await get_upstream_recurrence_interval_minutes(upstream_task)
-        else:
-            window_minutes = 1440  # Default 24 hours
-    
+
+    window_minutes = await resolve_rule_validity_window_minutes(db, rule)
+
     window_start = downstream_scheduled_for - timedelta(minutes=window_minutes)
     
     # Find completions within window
@@ -538,7 +560,7 @@ async def get_qualifying_upstream_ids(
             db, rule, None, downstream_scheduled_for, statuses
         )
     elif rule.scope == "within_window":
-        window_minutes = rule.validity_window_minutes or 1440
+        window_minutes = await resolve_rule_validity_window_minutes(db, rule)
         if downstream_scheduled_for:
             window_start = downstream_scheduled_for - timedelta(minutes=window_minutes)
         else:

@@ -403,6 +403,137 @@ class TestCountQualifyingCompletions:
         assert result == 0
 
 
+class TestEffectiveWithinWindowMinutes:
+    """_effective_within_window_minutes: N>1 uses at least 24h lookback."""
+
+    def test_count_one_preserves_short_window(self) -> None:
+        from app.services.dependency_service import _effective_within_window_minutes
+
+        class R:
+            required_occurrence_count = 1
+
+        assert _effective_within_window_minutes(R(), 60) == 60
+        assert _effective_within_window_minutes(R(), 840) == 840
+
+    def test_count_gt_one_raises_floor_below_24h(self) -> None:
+        from app.services.dependency_service import _effective_within_window_minutes
+
+        class R:
+            required_occurrence_count = 4
+
+        assert _effective_within_window_minutes(R(), 840) == 1440
+        assert _effective_within_window_minutes(R(), 1439) == 1440
+
+    def test_count_gt_one_keeps_window_at_or_above_24h(self) -> None:
+        from app.services.dependency_service import _effective_within_window_minutes
+
+        class R:
+            required_occurrence_count = 3
+
+        assert _effective_within_window_minutes(R(), 1440) == 1440
+        assert _effective_within_window_minutes(R(), 2880) == 2880
+
+
+class TestResolveRuleValidityWindowMinutes:
+    """resolve_rule_validity_window_minutes consolidates defaults + N>1 floor."""
+
+    @pytest.mark.asyncio
+    async def test_explicit_minutes_applies_count_floor(self) -> None:
+        from app.services.dependency_service import resolve_rule_validity_window_minutes
+
+        class Rule:
+            validity_window_minutes = 840
+            required_occurrence_count = 4
+            upstream_task_id = str(uuid4())
+
+        mock_db = AsyncMock()
+        out = await resolve_rule_validity_window_minutes(mock_db, Rule())  # type: ignore[arg-type]
+        assert out == 1440
+        mock_db.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_explicit_minutes_single_count_unchanged(self) -> None:
+        from app.services.dependency_service import resolve_rule_validity_window_minutes
+
+        class Rule:
+            validity_window_minutes = 840
+            required_occurrence_count = 1
+            upstream_task_id = str(uuid4())
+
+        mock_db = AsyncMock()
+        out = await resolve_rule_validity_window_minutes(mock_db, Rule())  # type: ignore[arg-type]
+        assert out == 840
+
+    @pytest.mark.asyncio
+    async def test_null_validity_uses_upstream_recurrence(self) -> None:
+        from app.services.dependency_service import resolve_rule_validity_window_minutes
+
+        class Rule:
+            validity_window_minutes = None
+            required_occurrence_count = 2
+            upstream_task_id = str(uuid4())
+
+        mock_db = AsyncMock()
+        task_result = MagicMock()
+        ut = MagicMock()
+        ut.is_recurring = True
+        ut.recurrence_rule = "FREQ=DAILY"
+        task_result.scalar_one_or_none.return_value = ut
+        mock_db.execute.return_value = task_result
+
+        out = await resolve_rule_validity_window_minutes(mock_db, Rule())  # type: ignore[arg-type]
+        assert out == 1440
+
+    @pytest.mark.asyncio
+    async def test_null_validity_missing_upstream_defaults_1440(self) -> None:
+        from app.services.dependency_service import resolve_rule_validity_window_minutes
+
+        class Rule:
+            validity_window_minutes = None
+            required_occurrence_count = 2
+            upstream_task_id = str(uuid4())
+
+        mock_db = AsyncMock()
+        task_result = MagicMock()
+        task_result.scalar_one_or_none.return_value = None
+        mock_db.execute.return_value = task_result
+
+        out = await resolve_rule_validity_window_minutes(mock_db, Rule())  # type: ignore[arg-type]
+        assert out == 1440
+
+
+class TestResolveNextOccurrenceEarlyBreak:
+    """Cover early exit when required_occurrence_count is met."""
+
+    @pytest.mark.asyncio
+    async def test_breaks_when_count_reached(self) -> None:
+        from app.services.dependency_service import _resolve_next_occurrence
+
+        mock_rule = MagicMock()
+        mock_rule.upstream_task_id = str(uuid4())
+        mock_rule.required_occurrence_count = 2
+        mock_rule.id = str(uuid4())
+
+        c1, c2, c3 = MagicMock(), MagicMock(), MagicMock()
+        c1.id = "a"
+        c2.id = "b"
+        c3.id = "c"
+
+        comp_result = MagicMock()
+        comp_result.scalars.return_value.all.return_value = [c1, c2, c3]
+
+        cons_result = MagicMock()
+        cons_result.scalars.return_value.all.return_value = []
+
+        mock_db = AsyncMock()
+        mock_db.execute.side_effect = [comp_result, cons_result]
+
+        result = await _resolve_next_occurrence(
+            mock_db, mock_rule, utc_now(), ("completed",),
+        )
+        assert result == 2
+
+
 class TestResolveWithinWindow:
     """Test _resolve_within_window edge cases."""
     
@@ -418,6 +549,35 @@ class TestResolveWithinWindow:
             mock_db, mock_rule, None, completion_statuses=("completed",)
         )
         assert result == 0
+
+
+class TestGetTransitiveUnmetHardPrerequisites:
+    """get_transitive_unmet_hard_prerequisites depth and visited short-circuit."""
+
+    @pytest.mark.asyncio
+    async def test_max_depth_raises(self) -> None:
+        from app.services.dependency_service import (
+            MAX_CHAIN_DEPTH,
+            get_transitive_unmet_hard_prerequisites,
+        )
+
+        mock_db = AsyncMock()
+        with pytest.raises(ValueError, match="exceeds maximum depth"):
+            await get_transitive_unmet_hard_prerequisites(
+                mock_db, "t1", "u1", None, depth=MAX_CHAIN_DEPTH
+            )
+
+    @pytest.mark.asyncio
+    async def test_visited_task_returns_empty(self) -> None:
+        from app.services.dependency_service import get_transitive_unmet_hard_prerequisites
+
+        mock_db = AsyncMock()
+        tid = str(uuid4())
+        result = await get_transitive_unmet_hard_prerequisites(
+            mock_db, tid, "u1", None, depth=0, visited={tid}
+        )
+        assert result == []
+        mock_db.execute.assert_not_called()
 
 
 class TestGetTransitiveBlockers:

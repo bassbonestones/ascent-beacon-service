@@ -23,6 +23,7 @@ from app.services.dependency_service import (
     MAX_CHAIN_DEPTH,
     _count_qualifying_completions,
     get_upstream_recurrence_interval_minutes,
+    resolve_rule_validity_window_minutes,
 )
 
 
@@ -52,15 +53,7 @@ async def _within_window_bounds(
     downstream_anchor: datetime,
 ) -> tuple[datetime, datetime]:
     """Window [start, end) for within_window scope (end = downstream occurrence)."""
-    window_minutes = rule.validity_window_minutes
-    if window_minutes is None:
-        upstream_stmt = select(Task).where(Task.id == rule.upstream_task_id)
-        upstream_result = await db.execute(upstream_stmt)
-        upstream_task = upstream_result.scalar_one_or_none()
-        if upstream_task:
-            window_minutes = await get_upstream_recurrence_interval_minutes(upstream_task)
-        else:
-            window_minutes = 1440
+    window_minutes = await resolve_rule_validity_window_minutes(db, rule)
     window_start = downstream_anchor - timedelta(minutes=window_minutes)
     return window_start, downstream_anchor
 

@@ -16,6 +16,20 @@ from app.services.dependency_service import check_dependencies
 if TYPE_CHECKING:
     from app.models import Task
 
+# Date-only / untimed tasks: anchor dependency windows to end of calendar day so
+# same-day upstream completions satisfy completed_at < downstream_scheduled_for.
+_END_OF_DAY = time(23, 59, 59, 999999)
+
+
+def _dependency_scheduled_anchor(dt: datetime) -> datetime:
+    """
+    If the occurrence is exactly at midnight, treat like 'sometime that day' for
+    within_window: otherwise completed_at < 00:00 excludes the whole day (0/N).
+    """
+    if dt.hour == 0 and dt.minute == 0 and dt.second == 0 and dt.microsecond == 0:
+        return dt.replace(hour=23, minute=59, second=59, microsecond=999999)
+    return dt
+
 
 async def downstream_task_ids_with_rules(db: AsyncSession, user_id: str) -> set[str]:
     """Task IDs that appear as downstream on at least one dependency rule."""
@@ -35,15 +49,16 @@ def _occurrence_scheduled_for(task: "Task", client_day: date) -> datetime | None
             st = task.scheduled_at
             if st.tzinfo is None:
                 st = st.replace(tzinfo=timezone.utc)
-            return datetime.combine(client_day, st.time(), tzinfo=st.tzinfo)
-        return datetime.combine(client_day, time.min, tzinfo=timezone.utc)
+            combined = datetime.combine(client_day, st.time(), tzinfo=st.tzinfo)
+            return _dependency_scheduled_anchor(combined)
+        return datetime.combine(client_day, _END_OF_DAY, tzinfo=timezone.utc)
     if task.scheduled_at:
         st = task.scheduled_at
         if st.tzinfo is None:
             st = st.replace(tzinfo=timezone.utc)
         if st.date() != client_day:
             return None
-        return st
+        return _dependency_scheduled_anchor(st)
     if task.scheduled_date:
         try:
             sd = datetime.strptime(task.scheduled_date, "%Y-%m-%d").date()
@@ -51,8 +66,8 @@ def _occurrence_scheduled_for(task: "Task", client_day: date) -> datetime | None
             return None
         if sd != client_day:
             return None
-        return datetime.combine(client_day, time.min, tzinfo=timezone.utc)
-    return datetime.combine(client_day, time.min, tzinfo=timezone.utc)
+        return datetime.combine(client_day, _END_OF_DAY, tzinfo=timezone.utc)
+    return datetime.combine(client_day, _END_OF_DAY, tzinfo=timezone.utc)
 
 
 async def _upstream_skipped_on_local_date(
