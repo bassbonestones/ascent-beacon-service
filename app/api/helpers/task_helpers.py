@@ -1,13 +1,35 @@
 """
 Helper functions for Tasks API.
 """
+from datetime import datetime
+
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models import Task, Goal
+from app.models.dependency import DependencyRule
+from app.record_state import ACTIVE, DELETED
 from app.schemas.tasks import GoalInfo, TaskDependencySummary, TaskResponse
+
+
+def _task_str_field(task: object, name: str, default: str | None) -> str | None:
+    v = getattr(task, name, default)
+    if isinstance(v, str):
+        return v
+    return default
+
+
+def _task_dt_field(task: object, name: str) -> datetime | None:
+    if not hasattr(task, name):
+        return None
+    v = getattr(task, name)
+    if v is None:
+        return None
+    if isinstance(v, datetime):
+        return v
+    return None
 
 
 async def get_task_or_404(
@@ -23,6 +45,21 @@ async def get_task_or_404(
     task = result.scalar_one_or_none()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
+    if (_task_str_field(task, "record_state", "active") or "active") == DELETED:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return task
+
+
+async def get_active_task_or_404(
+    db: AsyncSession, task_id: str, user_id: str
+) -> Task:
+    """Task must exist, belong to user, and have ``record_state == active``."""
+    task = await get_task_or_404(db, task_id, user_id)
+    if (_task_str_field(task, "record_state", "active") or "active") != ACTIVE:
+        raise HTTPException(
+            status_code=409,
+            detail="Task is not active",
+        )
     return task
 
 
@@ -30,12 +67,35 @@ async def get_goal_for_task_or_404(
     db: AsyncSession, goal_id: str, user_id: str
 ) -> Goal:
     """Get a goal by ID for task creation, ensuring it belongs to the user."""
+    from app.record_state import ACTIVE
+
     stmt = select(Goal).where(Goal.id == goal_id, Goal.user_id == user_id)
     result = await db.execute(stmt)
     goal = result.scalar_one_or_none()
     if not goal:
         raise HTTPException(status_code=404, detail="Goal not found")
+    if (_task_str_field(goal, "record_state", "active") or "active") != ACTIVE:
+        raise HTTPException(
+            status_code=409,
+            detail="Goal is not active",
+        )
     return goal
+
+
+async def task_has_dependency_edges(db: AsyncSession, task_id: str) -> bool:
+    """True if any dependency rule references this task."""
+    r = await db.execute(
+        select(func.count())
+        .select_from(DependencyRule)
+        .where(
+            or_(
+                DependencyRule.upstream_task_id == task_id,
+                DependencyRule.downstream_task_id == task_id,
+            )
+        )
+    )
+    n = r.scalar_one()
+    return int(n or 0) > 0
 
 
 def task_to_response(
@@ -102,6 +162,10 @@ def task_to_response(
         updated_at=task.updated_at,
         is_lightning=task.is_lightning,
         goal=goal_info,
+        record_state=_task_str_field(task, "record_state", "active") or "active",
+        unaligned_execution_acknowledged_at=_task_dt_field(
+            task, "unaligned_execution_acknowledged_at"
+        ),
         completed_for_today=completed_for_today if task.is_recurring else False,
         completions_today=completions_today if task.is_recurring else 0,
         completed_times_today=completed_times_today or [] if task.is_recurring else [],
@@ -131,7 +195,10 @@ async def update_goal_progress(db: AsyncSession, goal_id: str | None) -> None:
         return
     
     # Get all tasks for this goal
-    task_stmt = select(Task).where(Task.goal_id == goal_id)
+    task_stmt = select(Task).where(
+        Task.goal_id == goal_id,
+        Task.record_state == ACTIVE,
+    )
     result = await db.execute(task_stmt)
     tasks = list(result.scalars().all())
     

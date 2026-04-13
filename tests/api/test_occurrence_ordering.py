@@ -1635,7 +1635,8 @@ class TestAlignment:
     @pytest.mark.asyncio
     async def test_check_alignment_empty(self, client: AsyncClient):
         """Test alignment check with no values or priorities."""
-        response = await client.post("/alignment/check", json={})
+        with patch("app.api.alignment.LLMService.get_alignment_reflection", new=AsyncMock(return_value="")):
+            response = await client.post("/alignment/check", json={})
         assert response.status_code == 200
         data = response.json()
         assert "alignment_fit" in data
@@ -1654,7 +1655,8 @@ class TestAlignment:
             },
         )
         
-        response = await client.post("/alignment/check", json={})
+        with patch("app.api.alignment.LLMService.get_alignment_reflection", new=AsyncMock(return_value="")):
+            response = await client.post("/alignment/check", json={})
         assert response.status_code == 200
         data = response.json()
         assert "alignment_fit" in data
@@ -1826,3 +1828,356 @@ async def test_reorder_occurrences_with_tasks(client: AsyncClient):
         },
     )
     assert response.status_code == 200
+
+
+# ---- migrated from tests/mocked/test_pure_functions_ordering.py ----
+
+"""Migrated tests from test_pure_functions.py (slice 1)."""
+
+"""
+Pure unit tests for schemas, model methods, and core utilities.
+No database or async required - these test pure Python logic.
+
+Target: Branch coverage for non-DB logic.
+"""
+import pytest
+from datetime import datetime, timezone, timedelta
+from decimal import Decimal
+from unittest.mock import Mock, AsyncMock, patch
+from uuid import uuid4
+
+from pydantic import ValidationError as PydanticValidationError
+
+# Schema imports
+from app.schemas.dependency import (
+    CreateDependencyRuleRequest,
+    DependencyBlocker,
+    DependencyStatusResponse,
+    TaskInfo,
+)
+from app.schemas.values import ValueResponse, ValueRevisionResponse
+
+# Core utility imports
+from app.core.security import (
+    create_access_token,
+    decode_access_token,
+    generate_random_token,
+    generate_verification_code,
+    hash_token,
+)
+from app.core.exceptions import (
+    AscentBeaconError,
+    ValidationError,
+    NotFoundError,
+    AuthenticationError,
+    TokenExpiredError,
+    InvalidTokenError,
+    ForbiddenError,
+    OwnershipError,
+    BadRequestError,
+)
+
+class TestOccurrenceOrderingLogic:
+    """Tests for occurrence ordering logic patterns."""
+
+    def test_validate_task_ids_pattern(self):
+        """Test task ID validation logic."""
+        requested_task_ids = {"task-1", "task-2", "task-3"}
+        valid_task_ids = {"task-1", "task-2"}  # task-3 not found
+        
+        invalid_tasks = requested_task_ids - valid_task_ids
+        
+        assert invalid_tasks == {"task-3"}
+
+    def test_no_invalid_tasks(self):
+        """Test when all tasks are valid."""
+        requested_task_ids = {"task-1", "task-2"}
+        valid_task_ids = {"task-1", "task-2", "task-3"}
+        
+        invalid_tasks = requested_task_ids - valid_task_ids
+        
+        assert invalid_tasks == set()
+
+    def test_save_mode_today_vs_permanent(self):
+        """Test save mode branching logic."""
+        for save_mode in ["today", "permanent"]:
+            if save_mode == "today":
+                action = "save_daily_overrides"
+            else:
+                action = "save_permanent_preferences"
+            
+            if save_mode == "today":
+                assert action == "save_daily_overrides"
+            else:
+                assert action == "save_permanent_preferences"
+
+class TestClassifyTasksByRecurrence:
+    """Tests for classify_tasks_by_recurrence function."""
+
+    def test_empty_list(self):
+        """Empty task list returns empty results."""
+        from app.api.helpers.occurrence_helpers import classify_tasks_by_recurrence
+        
+        recurring, single = classify_tasks_by_recurrence([], {})
+        
+        assert recurring == []
+        assert single == []
+
+    def test_all_recurring(self):
+        """All recurring tasks go to recurring list."""
+        from app.api.helpers.occurrence_helpers import classify_tasks_by_recurrence
+        
+        task_ids = ["t1", "t2", "t3"]
+        recurring_map = {"t1": True, "t2": True, "t3": True}
+        
+        recurring, single = classify_tasks_by_recurrence(task_ids, recurring_map)
+        
+        assert recurring == ["t1", "t2", "t3"]
+        assert single == []
+
+    def test_all_single(self):
+        """All non-recurring tasks go to single list."""
+        from app.api.helpers.occurrence_helpers import classify_tasks_by_recurrence
+        
+        task_ids = ["t1", "t2"]
+        recurring_map = {"t1": False, "t2": False}
+        
+        recurring, single = classify_tasks_by_recurrence(task_ids, recurring_map)
+        
+        assert recurring == []
+        assert single == ["t1", "t2"]
+
+    def test_mixed_classification(self):
+        """Mixed recurring/single are correctly classified."""
+        from app.api.helpers.occurrence_helpers import classify_tasks_by_recurrence
+        
+        task_ids = ["t1", "t2", "t3", "t4"]
+        recurring_map = {"t1": True, "t2": False, "t3": True, "t4": False}
+        
+        recurring, single = classify_tasks_by_recurrence(task_ids, recurring_map)
+        
+        assert recurring == ["t1", "t3"]
+        assert single == ["t2", "t4"]
+
+    def test_missing_from_map_defaults_single(self):
+        """Tasks not in map default to non-recurring."""
+        from app.api.helpers.occurrence_helpers import classify_tasks_by_recurrence
+        
+        task_ids = ["t1", "t2"]
+        recurring_map = {}  # Empty map
+        
+        recurring, single = classify_tasks_by_recurrence(task_ids, recurring_map)
+        
+        assert recurring == []
+        assert single == ["t1", "t2"]
+
+class TestFindPositionInOccurrences:
+    """Tests for find_position_in_occurrences function."""
+
+    def test_finds_first_position(self):
+        """Finds occurrence at first position."""
+        from app.api.helpers.occurrence_helpers import find_position_in_occurrences
+        
+        class MockOcc:
+            def __init__(self, task_id, occurrence_index):
+                self.task_id = task_id
+                self.occurrence_index = occurrence_index
+        
+        occurrences = [
+            MockOcc("t1", 0),
+            MockOcc("t2", 0),
+        ]
+        
+        pos = find_position_in_occurrences(occurrences, "t1", 0)
+        
+        assert pos == 1  # 1-based
+
+    def test_finds_middle_position(self):
+        """Finds occurrence in middle of list."""
+        from app.api.helpers.occurrence_helpers import find_position_in_occurrences
+        
+        class MockOcc:
+            def __init__(self, task_id, occurrence_index):
+                self.task_id = task_id
+                self.occurrence_index = occurrence_index
+        
+        occurrences = [
+            MockOcc("t1", 0),
+            MockOcc("t2", 0),
+            MockOcc("t3", 0),
+        ]
+        
+        pos = find_position_in_occurrences(occurrences, "t2", 0)
+        
+        assert pos == 2
+
+    def test_raises_when_not_found(self):
+        """Raises ValueError when occurrence not found."""
+        from app.api.helpers.occurrence_helpers import find_position_in_occurrences
+        
+        class MockOcc:
+            def __init__(self, task_id, occurrence_index):
+                self.task_id = task_id
+                self.occurrence_index = occurrence_index
+        
+        occurrences = [MockOcc("t1", 0)]
+        
+        with pytest.raises(ValueError, match="Occurrence not found"):
+            find_position_in_occurrences(occurrences, "t2", 0)
+
+    def test_matches_on_both_fields(self):
+        """Must match both task_id and occurrence_index."""
+        from app.api.helpers.occurrence_helpers import find_position_in_occurrences
+        
+        class MockOcc:
+            def __init__(self, task_id, occurrence_index):
+                self.task_id = task_id
+                self.occurrence_index = occurrence_index
+        
+        occurrences = [
+            MockOcc("t1", 0),
+            MockOcc("t1", 1),
+            MockOcc("t1", 2),
+        ]
+        
+        pos = find_position_in_occurrences(occurrences, "t1", 1)
+        
+        assert pos == 2
+
+class TestMergeOverridesAndPreferences:
+    """Tests for merge_overrides_and_preferences function."""
+
+    def test_empty_inputs(self):
+        """Empty inputs return empty results."""
+        from app.api.helpers.occurrence_helpers import merge_overrides_and_preferences
+        
+        items, keys = merge_overrides_and_preferences([], [])
+        
+        assert items == []
+        assert keys == set()
+
+    def test_only_overrides(self):
+        """Only overrides returns override items."""
+        from app.api.helpers.occurrence_helpers import merge_overrides_and_preferences
+        
+        class MockOverride:
+            def __init__(self, task_id, occurrence_index, sort_position):
+                self.task_id = task_id
+                self.occurrence_index = occurrence_index
+                self.sort_position = sort_position
+        
+        overrides = [MockOverride("t1", 0, 1.5)]
+        
+        items, keys = merge_overrides_and_preferences(overrides, [])
+        
+        assert len(items) == 1
+        assert items[0]["task_id"] == "t1"
+        assert items[0]["is_override"] is True
+        assert ("t1", 0) in keys
+
+    def test_only_prefs(self):
+        """Only preferences returns preference items."""
+        from app.api.helpers.occurrence_helpers import merge_overrides_and_preferences
+        
+        class MockPref:
+            def __init__(self, task_id, occurrence_index, sequence_number):
+                self.task_id = task_id
+                self.occurrence_index = occurrence_index
+                self.sequence_number = sequence_number
+        
+        prefs = [MockPref("t1", 0, 100)]
+        
+        items, keys = merge_overrides_and_preferences([], prefs)
+        
+        assert len(items) == 1
+        assert items[0]["task_id"] == "t1"
+        assert items[0]["is_override"] is False
+        assert keys == set()
+
+    def test_override_excludes_pref(self):
+        """Override on same task/occurrence excludes preference."""
+        from app.api.helpers.occurrence_helpers import merge_overrides_and_preferences
+        
+        class MockOverride:
+            def __init__(self, task_id, occurrence_index, sort_position):
+                self.task_id = task_id
+                self.occurrence_index = occurrence_index
+                self.sort_position = sort_position
+        
+        class MockPref:
+            def __init__(self, task_id, occurrence_index, sequence_number):
+                self.task_id = task_id
+                self.occurrence_index = occurrence_index
+                self.sequence_number = sequence_number
+        
+        overrides = [MockOverride("t1", 0, 1.5)]
+        prefs = [MockPref("t1", 0, 100)]  # Same key
+        
+        items, keys = merge_overrides_and_preferences(overrides, prefs)
+        
+        # Only override should be included
+        assert len(items) == 1
+        assert items[0]["is_override"] is True
+
+class TestBuildTaskIdsFromOccurrences:
+    """Tests for build_task_ids_from_occurrences function."""
+
+    def test_empty_list(self):
+        """Empty list returns empty result."""
+        from app.api.helpers.occurrence_helpers import build_task_ids_from_occurrences
+        
+        result = build_task_ids_from_occurrences([])
+        
+        assert result == []
+
+    def test_extracts_task_ids(self):
+        """Extracts task_id from each occurrence."""
+        from app.api.helpers.occurrence_helpers import build_task_ids_from_occurrences
+        
+        class MockOcc:
+            def __init__(self, task_id):
+                self.task_id = task_id
+        
+        occurrences = [MockOcc("t1"), MockOcc("t2"), MockOcc("t3")]
+        
+        result = build_task_ids_from_occurrences(occurrences)
+        
+        assert result == ["t1", "t2", "t3"]
+
+class TestValidateAllTasksExist:
+    """Tests for validate_all_tasks_exist function."""
+
+    def test_all_valid(self):
+        """All valid task IDs returns empty set."""
+        from app.api.helpers.occurrence_helpers import validate_all_tasks_exist
+        
+        task_ids = ["t1", "t2", "t3"]
+        valid_ids = {"t1", "t2", "t3"}
+        
+        invalid = validate_all_tasks_exist(task_ids, valid_ids)
+        
+        assert invalid == set()
+
+    def test_some_invalid(self):
+        """Returns set of invalid IDs."""
+        from app.api.helpers.occurrence_helpers import validate_all_tasks_exist
+        
+        task_ids = ["t1", "t2", "t3"]
+        valid_ids = {"t1"}  # Only t1 is valid
+        
+        invalid = validate_all_tasks_exist(task_ids, valid_ids)
+        
+        assert invalid == {"t2", "t3"}
+
+    def test_empty_task_ids(self):
+        """Empty task IDs list returns empty set."""
+        from app.api.helpers.occurrence_helpers import validate_all_tasks_exist
+        
+        invalid = validate_all_tasks_exist([], {"t1", "t2"})
+        
+        assert invalid == set()
+
+
+# ============================================================================
+# Additional Branch Coverage Tests
+# ============================================================================

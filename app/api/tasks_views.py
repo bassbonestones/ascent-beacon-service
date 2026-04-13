@@ -26,6 +26,7 @@ from app.api.helpers.task_helpers import (
     get_task_or_404,
     task_to_response,
 )
+from app.record_state import ACTIVE
 
 router = APIRouter(prefix="/tasks/view", tags=["tasks-views"])
 
@@ -57,7 +58,7 @@ async def get_today_tasks(
     stmt = (
         select(Task)
         .options(selectinload(Task.goal))
-        .where(Task.user_id == user.id)
+        .where(Task.user_id == user.id, Task.record_state == ACTIVE)
         .where(
             or_(
                 # One-time tasks scheduled for today
@@ -130,7 +131,7 @@ async def get_tasks_in_range(
     stmt = (
         select(Task)
         .options(selectinload(Task.goal))
-        .where(Task.user_id == user.id)
+        .where(Task.user_id == user.id, Task.record_state == ACTIVE)
         .where(
             or_(
                 # Tasks with scheduled times in range

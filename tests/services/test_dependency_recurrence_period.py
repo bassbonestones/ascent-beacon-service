@@ -1,5 +1,4 @@
 """Tests for prerequisite recurrence period keys (next_occurrence Rule B)."""
-from __future__ import annotations
 
 from datetime import datetime, timezone
 from unittest.mock import MagicMock

@@ -57,6 +57,15 @@ class Goal(Base, UUIDMixin, TimestampMixin):
     # Completion timestamp
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # Phase 4j: visibility / lifecycle (separate from workflow status)
+    # active | paused | archived | deleted
+    record_state: Mapped[str] = mapped_column(String, nullable=False, default="active")
+    archived_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # When archiving: failed | ignored (habit stats); NULL if not archived
+    archive_tracking_mode: Mapped[str | None] = mapped_column(String, nullable=True)
+
     # Relationships
     user: Mapped["User"] = relationship("User", back_populates="goals")
     
@@ -91,6 +100,7 @@ class Goal(Base, UUIDMixin, TimestampMixin):
         Index("ix_goals_parent_goal_id", "parent_goal_id"),
         Index("ix_goals_status", "status"),
         Index("ix_goals_user_status", "user_id", "status"),
+        Index("ix_goals_record_state", "record_state"),
     )
 
     def __repr__(self) -> str:

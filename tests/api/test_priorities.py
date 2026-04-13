@@ -953,7 +953,7 @@ async def test_create_revision_removes_values_anchored_fails(client: AsyncClient
 
 
 @pytest.mark.asyncio
-async def test_unanchor_priority(client: AsyncClient, mock_validate_priority):
+async def test_unanchor_priority_block_2(client: AsyncClient, mock_validate_priority):
     """Test unanchoring a priority."""
     # Create and anchor priority
     create_response = await client.post(
@@ -975,7 +975,7 @@ async def test_unanchor_priority(client: AsyncClient, mock_validate_priority):
 
 
 @pytest.mark.asyncio
-async def test_unanchor_priority_not_found(client: AsyncClient):
+async def test_unanchor_priority_not_found_block_2(client: AsyncClient):
     """Test unanchoring non-existent priority."""
     response = await client.post("/priorities/00000000-0000-0000-0000-000000000000/unanchor")
     assert response.status_code == 404
@@ -987,7 +987,7 @@ async def test_unanchor_priority_not_found(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_delete_priority(client: AsyncClient, mock_validate_priority):
+async def test_delete_priority_block_2(client: AsyncClient, mock_validate_priority):
     """Test deleting a priority."""
     create_response = await client.post(
         "/priorities",
@@ -1010,7 +1010,7 @@ async def test_delete_priority(client: AsyncClient, mock_validate_priority):
 
 
 @pytest.mark.asyncio
-async def test_delete_priority_not_found(client: AsyncClient):
+async def test_delete_priority_not_found_block_2(client: AsyncClient):
     """Test deleting non-existent priority."""
     response = await client.delete("/priorities/00000000-0000-0000-0000-000000000000")
     assert response.status_code == 404
@@ -1022,7 +1022,7 @@ async def test_delete_priority_not_found(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_stash_priority(client: AsyncClient, mock_validate_priority):
+async def test_stash_priority_block_2(client: AsyncClient, mock_validate_priority):
     """Test stashing a priority (POST with body)."""
     # Create priority
     response = await client.post(
@@ -1044,7 +1044,7 @@ async def test_stash_priority(client: AsyncClient, mock_validate_priority):
 
 
 @pytest.mark.asyncio
-async def test_stash_priority_not_found(client: AsyncClient):
+async def test_stash_priority_not_found_block_2(client: AsyncClient):
     """Test stashing non-existent priority."""
     response = await client.post(
         "/priorities/00000000-0000-0000-0000-000000000000/stash",
@@ -1054,7 +1054,7 @@ async def test_stash_priority_not_found(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_unstash_priority(client: AsyncClient, mock_validate_priority):
+async def test_unstash_priority_block_2(client: AsyncClient, mock_validate_priority):
     """Test unstashing a priority (POST with is_stashed=False)."""
     # Create priority
     response = await client.post(
@@ -1082,7 +1082,7 @@ async def test_unstash_priority(client: AsyncClient, mock_validate_priority):
 
 
 @pytest.mark.asyncio
-async def test_anchor_priority(client: AsyncClient, mock_validate_priority):
+async def test_anchor_priority_block_2(client: AsyncClient, mock_validate_priority):
     """Test anchoring a priority."""
     # Create priority
     response = await client.post(
@@ -1105,14 +1105,14 @@ async def test_anchor_priority(client: AsyncClient, mock_validate_priority):
 
 
 @pytest.mark.asyncio
-async def test_anchor_priority_not_found(client: AsyncClient):
+async def test_anchor_priority_not_found_block_2(client: AsyncClient):
     """Test anchoring non-existent priority."""
     response = await client.post("/priorities/00000000-0000-0000-0000-000000000000/anchor")
     assert response.status_code == 404
 
 
 @pytest.mark.asyncio
-async def test_unanchor_priority(client: AsyncClient, mock_validate_priority):
+async def test_unanchor_priority_block_3(client: AsyncClient, mock_validate_priority):
     """Test unanchoring a priority."""
     # Create priority
     response = await client.post(
@@ -1136,7 +1136,7 @@ async def test_unanchor_priority(client: AsyncClient, mock_validate_priority):
 
 
 @pytest.mark.asyncio
-async def test_unanchor_priority_not_found(client: AsyncClient):
+async def test_unanchor_priority_not_found_block_3(client: AsyncClient):
     """Test unanchoring non-existent priority."""
     response = await client.post("/priorities/00000000-0000-0000-0000-000000000000/unanchor")
     assert response.status_code == 404
@@ -1184,7 +1184,7 @@ async def test_create_priority_revision_not_found(client: AsyncClient, mock_vali
 
 
 @pytest.mark.asyncio
-async def test_get_priority_history(client: AsyncClient, mock_validate_priority):
+async def test_get_priority_history_block_2(client: AsyncClient, mock_validate_priority):
     """Test getting revision history for a priority."""
     # Create priority
     create_response = await client.post(
@@ -1215,7 +1215,7 @@ async def test_get_priority_history(client: AsyncClient, mock_validate_priority)
 
 
 @pytest.mark.asyncio
-async def test_get_priority_history_not_found(client: AsyncClient):
+async def test_get_priority_history_not_found_block_2(client: AsyncClient):
     """Test getting history for non-existent priority."""
     response = await client.get("/priorities/00000000-0000-0000-0000-000000000000/history")
     assert response.status_code == 404
@@ -1456,7 +1456,260 @@ async def test_delete_priority_success(client: AsyncClient, mock_validate_priori
 
 
 @pytest.mark.asyncio
-async def test_delete_priority_not_found(client: AsyncClient):
+async def test_delete_priority_not_found_block_3(client: AsyncClient):
     """Test deleting non-existent priority."""
     response = await client.delete("/priorities/00000000-0000-0000-0000-000000000000")
     assert response.status_code == 404
+
+
+# ---- migrated from tests/mocked/test_services_priorities_migrated.py ----
+
+"""Unit tests with mocked external services and error scenarios."""
+
+import pytest
+from httpx import AsyncClient
+from unittest.mock import patch, AsyncMock, MagicMock
+from datetime import datetime, timezone, timedelta
+import json
+
+
+# ============================================================================
+# Mock Fixtures
+# ============================================================================
+
+
+@pytest.fixture
+def mock_validate_priority():
+    """Mock priority validation to always return valid."""
+    with patch("app.services.priority_validation.validate_priority") as mock:
+        async def async_return(*args, **kwargs):
+            return {
+                "overall_valid": True,
+                "name_valid": True,
+                "why_valid": True,
+                "name_feedback": [],
+                "why_feedback": [],
+                "why_passed_rules": {"specificity": True, "actionable": True},
+                "name_rewrite": None,
+                "why_rewrite": None,
+                "rule_examples": None,
+            }
+        mock.side_effect = async_return
+        yield mock
+
+
+@pytest.fixture
+def mock_llm_alignment():
+    """Mock LLM service for alignment reflection."""
+    with patch("app.api.alignment.LLMService.get_alignment_reflection") as mock:
+        async def async_return(*args, **kwargs):
+            return "Your values and priorities are well aligned."
+        mock.side_effect = async_return
+        yield mock
+
+
+@pytest.fixture
+def mock_llm_recommendation():
+    """Mock LLM service for assistant recommendations."""
+    with patch("app.services.llm_service.LLMService.get_recommendation") as mock:
+        async def async_return(*args, **kwargs):
+            return {
+                "choices": [{
+                    "message": {
+                        "content": "I can help you with that.",
+                        "tool_calls": None,
+                    }
+                }]
+            }
+        mock.side_effect = async_return
+        yield mock
+
+
+# ============================================================================
+# Alignment API Tests with Mocked LLM
+# ============================================================================
+
+@pytest.mark.asyncio
+async def test_priority_not_found(client: AsyncClient):
+    """Test getting non-existent priority."""
+    response = await client.get("/priorities/00000000-0000-0000-0000-000000000000/history")
+    assert response.status_code == 404
+
+@pytest.mark.asyncio
+async def test_priority_delete_not_found(client: AsyncClient):
+    """Test deleting non-existent priority."""
+    response = await client.delete("/priorities/00000000-0000-0000-0000-000000000000")
+    assert response.status_code == 404
+
+@pytest.mark.asyncio
+async def test_priority_anchor_not_found(client: AsyncClient):
+    """Test anchoring non-existent priority."""
+    response = await client.post("/priorities/00000000-0000-0000-0000-000000000000/anchor")
+    assert response.status_code == 404
+
+@pytest.mark.asyncio
+async def test_priority_unanchor_not_found(client: AsyncClient):
+    """Test unanchoring non-existent priority."""
+    response = await client.post("/priorities/00000000-0000-0000-0000-000000000000/unanchor")
+    assert response.status_code == 404
+
+@pytest.mark.asyncio
+async def test_priority_stash_not_found(client: AsyncClient):
+    """Test stashing non-existent priority."""
+    response = await client.post(
+        "/priorities/00000000-0000-0000-0000-000000000000/stash",
+        json={"is_stashed": True},
+    )
+    assert response.status_code == 404
+
+@pytest.mark.asyncio
+async def test_priority_revision_not_found(client: AsyncClient, mock_validate_priority):
+    """Test creating revision for non-existent priority."""
+    response = await client.post(
+        "/priorities/00000000-0000-0000-0000-000000000000/revisions",
+        json={
+            "title": "New Revision",
+            "why_matters": "Testing revision on non-existent priority",
+            "score": 3,
+        },
+    )
+    assert response.status_code == 404
+
+
+# ============================================================================
+# Values API Error Scenarios  
+# ============================================================================
+
+@pytest.mark.asyncio
+async def test_links_get_not_found(client: AsyncClient):
+    """Test getting links for non-existent priority revision."""
+    response = await client.get(
+        "/priority-revisions/00000000-0000-0000-0000-000000000000/links"
+    )
+    assert response.status_code == 404
+
+@pytest.mark.asyncio
+async def test_links_set_not_found(client: AsyncClient):
+    """Test setting links for non-existent priority revision."""
+    response = await client.put(
+        "/priority-revisions/00000000-0000-0000-0000-000000000000/links",
+        json={"links": []},
+    )
+    assert response.status_code == 404
+
+
+# ============================================================================
+# Dependencies API Error Scenarios
+# ============================================================================
+
+@pytest.mark.asyncio
+async def test_priority_orphan_anchored_prevention(client: AsyncClient, mock_validate_priority):
+    """Test preventing orphaned anchored priorities."""
+    # Create value
+    val = await client.post(
+        "/values",
+        json={"statement": "Orphan Test Value", "weight_raw": 70, "origin": "declared"},
+    )
+    val_id = val.json()["id"]
+
+    # Create priority with value link
+    priority = await client.post(
+        "/priorities",
+        json={
+            "title": "Orphan Test Priority",
+            "why_matters": "Testing orphan prevention for anchored priorities",
+            "score": 4,
+            "value_ids": [val_id],
+        },
+    )
+    p_id = priority.json()["id"]
+
+    # Anchor it
+    await client.post(f"/priorities/{p_id}/anchor")
+
+    # Try to create revision without value links - should fail for anchored
+    response = await client.post(
+        f"/priorities/{p_id}/revisions",
+        json={
+            "title": "No Links Revision",
+            "why_matters": "Testing revision without value links",
+            "score": 3,
+            "value_ids": [],
+        },
+    )
+    # Should fail because anchored priorities need links
+    assert response.status_code == 400
+
+
+# ---- migrated from tests/integration/test_api_helpers_priorities.py ----
+
+"""Integration coverage for priorities helper behavior."""
+
+import pytest
+from httpx import AsyncClient
+from unittest.mock import patch
+
+
+@pytest.fixture
+def mock_validate_priority():
+    """Mock priority validation."""
+    with patch("app.services.priority_validation.validate_priority") as mock:
+        async def async_return(*args, **kwargs):
+            return {
+                "overall_valid": True,
+                "name_valid": True,
+                "why_valid": True,
+                "name_feedback": [],
+                "why_feedback": [],
+                "why_passed_rules": {"specificity": True, "actionable": True},
+                "name_rewrite": None,
+                "why_rewrite": None,
+                "rule_examples": None,
+            }
+
+        mock.side_effect = async_return
+        yield mock
+
+
+@pytest.mark.asyncio
+async def test_priority_delete(client: AsyncClient, mock_validate_priority):
+    """Test deleting a priority."""
+    priority = await client.post(
+        "/priorities",
+        json={
+            "title": "Delete Priority",
+            "why_matters": "Testing priority deletion",
+            "score": 2,
+        },
+    )
+    p_id = priority.json()["id"]
+
+    response = await client.delete(f"/priorities/{p_id}")
+    assert response.status_code == 204
+
+
+@pytest.mark.asyncio
+async def test_priority_with_multiple_value_links(client: AsyncClient, mock_validate_priority):
+    """Test priority linked to multiple values."""
+    val1 = await client.post(
+        "/values",
+        json={"statement": "Multi Link 1", "weight_raw": 50, "origin": "declared"},
+    )
+    v1_id = val1.json()["id"]
+
+    val2 = await client.post(
+        "/values",
+        json={"statement": "Multi Link 2", "weight_raw": 50, "origin": "declared"},
+    )
+    v2_id = val2.json()["id"]
+
+    response = await client.post(
+        "/priorities",
+        json={
+            "title": "Multi Value Priority",
+            "why_matters": "Testing multiple value links",
+            "score": 4,
+            "value_ids": [v1_id, v2_id],
+        },
+    )
+    assert response.status_code == 201

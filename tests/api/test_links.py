@@ -287,3 +287,70 @@ async def test_set_multiple_value_links(client: AsyncClient, mock_validate_prior
     )
     assert response.status_code == 200
     assert len(response.json()["links"]) == 2
+
+
+# ---- migrated from tests/integration/test_api_helpers_links.py ----
+
+"""Integration coverage for links helper behavior."""
+
+import pytest
+from httpx import AsyncClient
+from unittest.mock import patch
+
+
+@pytest.fixture
+def mock_validate_priority():
+    """Mock priority validation."""
+    with patch("app.services.priority_validation.validate_priority") as mock:
+        async def async_return(*args, **kwargs):
+            return {
+                "overall_valid": True,
+                "name_valid": True,
+                "why_valid": True,
+                "name_feedback": [],
+                "why_feedback": [],
+                "why_passed_rules": {"specificity": True, "actionable": True},
+                "name_rewrite": None,
+                "why_rewrite": None,
+                "rule_examples": None,
+            }
+
+        mock.side_effect = async_return
+        yield mock
+
+
+@pytest.mark.asyncio
+async def test_links_update_weights(client: AsyncClient, mock_validate_priority):
+    """Test updating link weights."""
+    val1 = await client.post(
+        "/values",
+        json={"statement": "Weight Link 1", "weight_raw": 60, "origin": "declared"},
+    )
+    v1_rev_id = val1.json()["active_revision"]["id"]
+
+    val2 = await client.post(
+        "/values",
+        json={"statement": "Weight Link 2", "weight_raw": 40, "origin": "declared"},
+    )
+    v2_rev_id = val2.json()["active_revision"]["id"]
+
+    priority = await client.post(
+        "/priorities",
+        json={
+            "title": "Weight Links Priority",
+            "why_matters": "Testing link weight updates",
+            "score": 3,
+        },
+    )
+    p_rev_id = priority.json()["active_revision"]["id"]
+
+    response = await client.put(
+        f"/priority-revisions/{p_rev_id}/links",
+        json={
+            "links": [
+                {"value_revision_id": v1_rev_id, "link_weight": 0.7},
+                {"value_revision_id": v2_rev_id, "link_weight": 0.3},
+            ]
+        },
+    )
+    assert response.status_code == 200

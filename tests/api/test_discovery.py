@@ -728,3 +728,147 @@ async def test_discovery_selections_update_partial(client: AsyncClient, db_sessi
     )
     assert response.status_code == 200
     assert response.json()["bucket"] == "important"
+
+
+# ---- migrated from tests/mocked/test_services_discovery_migrated.py ----
+
+"""Unit tests with mocked external services and error scenarios."""
+
+import pytest
+from httpx import AsyncClient
+from unittest.mock import patch, AsyncMock, MagicMock
+from datetime import datetime, timezone, timedelta
+import json
+
+
+# ============================================================================
+# Mock Fixtures
+# ============================================================================
+
+
+@pytest.fixture
+def mock_validate_priority():
+    """Mock priority validation to always return valid."""
+    with patch("app.services.priority_validation.validate_priority") as mock:
+        async def async_return(*args, **kwargs):
+            return {
+                "overall_valid": True,
+                "name_valid": True,
+                "why_valid": True,
+                "name_feedback": [],
+                "why_feedback": [],
+                "why_passed_rules": {"specificity": True, "actionable": True},
+                "name_rewrite": None,
+                "why_rewrite": None,
+                "rule_examples": None,
+            }
+        mock.side_effect = async_return
+        yield mock
+
+
+@pytest.fixture
+def mock_llm_alignment():
+    """Mock LLM service for alignment reflection."""
+    with patch("app.api.alignment.LLMService.get_alignment_reflection") as mock:
+        async def async_return(*args, **kwargs):
+            return "Your values and priorities are well aligned."
+        mock.side_effect = async_return
+        yield mock
+
+
+@pytest.fixture
+def mock_llm_recommendation():
+    """Mock LLM service for assistant recommendations."""
+    with patch("app.services.llm_service.LLMService.get_recommendation") as mock:
+        async def async_return(*args, **kwargs):
+            return {
+                "choices": [{
+                    "message": {
+                        "content": "I can help you with that.",
+                        "tool_calls": None,
+                    }
+                }]
+            }
+        mock.side_effect = async_return
+        yield mock
+
+
+# ============================================================================
+# Alignment API Tests with Mocked LLM
+# ============================================================================
+
+@pytest.mark.asyncio
+async def test_discovery_selection_duplicate(client: AsyncClient):
+    """Test creating duplicate selection fails."""
+    prompts = await client.get("/discovery/prompts")
+    assert prompts.status_code == 200
+    prompts_payload = prompts.json()["prompts"]
+    if not prompts_payload:
+        assert prompts_payload == []
+        return
+    prompt_id = prompts_payload[0]["id"]
+
+    resp1 = await client.post(
+        "/discovery/selections",
+        json={"prompt_id": prompt_id, "bucket": "keep", "display_order": 1},
+    )
+    assert resp1.status_code == 200
+
+    resp2 = await client.post(
+        "/discovery/selections",
+        json={"prompt_id": prompt_id, "bucket": "keep", "display_order": 2},
+    )
+    assert resp2.status_code == 400
+
+@pytest.mark.asyncio
+async def test_discovery_update_not_found(client: AsyncClient):
+    """Test updating non-existent selection."""
+    response = await client.put(
+        "/discovery/selections/00000000-0000-0000-0000-000000000000",
+        json={"bucket": "discard"},
+    )
+    assert response.status_code == 404
+
+@pytest.mark.asyncio
+async def test_discovery_delete_not_found(client: AsyncClient):
+    """Test deleting non-existent selection."""
+    response = await client.delete(
+        "/discovery/selections/00000000-0000-0000-0000-000000000000"
+    )
+    assert response.status_code == 404
+
+
+# ============================================================================
+# Goals API Error Scenarios
+# ============================================================================
+
+
+# ---- migrated from tests/integration/test_api_helpers_discovery.py ----
+
+"""Integration coverage for discovery helper behavior."""
+
+import pytest
+from httpx import AsyncClient
+
+
+@pytest.mark.asyncio
+async def test_discovery_prompts_after_value_creation(client: AsyncClient):
+    """Test that discovery prompts exclude used prompts."""
+    initial = await client.get("/discovery/prompts")
+    initial_prompts = initial.json()["prompts"]
+
+    if len(initial_prompts) > 0:
+        prompt_id = initial_prompts[0]["id"]
+
+        await client.post(
+            "/values",
+            json={
+                "statement": "From discovery prompt",
+                "weight_raw": 50,
+                "origin": "declared",
+                "source_prompt_id": prompt_id,
+            },
+        )
+
+        after = await client.get("/discovery/prompts")
+        assert after.status_code == 200

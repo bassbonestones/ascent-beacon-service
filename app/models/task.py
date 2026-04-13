@@ -99,6 +99,12 @@ class Task(Base, UUIDMixin, TimestampMixin):
     # NULL for non-recurring tasks, required for recurring tasks
     recurrence_behavior: Mapped[str | None] = mapped_column(String, nullable=True)
 
+    # Phase 4j: visibility / lifecycle (separate from workflow status)
+    record_state: Mapped[str] = mapped_column(String, nullable=False, default="active")
+    unaligned_execution_acknowledged_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     # Phase 4e: Sort order for anytime tasks (manual ordering)
     # NULL for non-anytime tasks, integer for anytime (lower = higher in list)
     sort_order: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -151,6 +157,7 @@ class Task(Base, UUIDMixin, TimestampMixin):
         Index("ix_tasks_scheduled_at", "scheduled_at"),
         Index("ix_tasks_is_recurring", "is_recurring"),
         Index("ix_tasks_user_status", "user_id", "status"),
+        Index("ix_tasks_record_state", "record_state"),
     )
 
     @property

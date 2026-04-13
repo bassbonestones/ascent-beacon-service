@@ -173,3 +173,31 @@ async def test_transcribe_audio_service_error(client: AsyncClient):
     
     # Should return 500 error
     assert response.status_code == 500
+
+
+# ---- migrated from tests/mocked/test_services_external_voice.py ----
+
+"""Voice API error scenarios."""
+
+import pytest
+from httpx import AsyncClient
+
+
+@pytest.mark.asyncio
+async def test_voice_stt_no_file(client: AsyncClient):
+    response = await client.post("/voice/stt")
+    assert response.status_code == 422
+
+
+# ---- migrated from tests/mocked/test_services_voice_migrated.py ----
+
+"""Migrated voice service tests split from mixed services file."""
+
+import pytest
+from httpx import AsyncClient
+
+
+@pytest.mark.asyncio
+async def test_voice_stt_no_file__legacyservices_voice_migrated(client: AsyncClient):
+    response = await client.post("/voice/stt")
+    assert response.status_code == 422

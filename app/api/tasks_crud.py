@@ -20,12 +20,15 @@ from app.schemas.tasks import (
     UpdateTaskRequest,
 )
 from app.api.helpers.task_helpers import (
+    get_active_task_or_404,
     get_task_or_404,
     get_goal_for_task_or_404,
+    task_has_dependency_edges,
     task_to_response,
     update_goal_progress,
     assign_sort_order_for_anytime,
 )
+from app.record_state import ACTIVE, DELETED, PAUSED
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
@@ -151,7 +154,7 @@ async def update_task(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> TaskResponse:
     """Update a task's fields."""
-    task = await get_task_or_404(db, task_id, user.id)
+    task = await get_active_task_or_404(db, task_id, user.id)
     old_goal_id = task.goal_id
     
     # Handle goal change
@@ -229,13 +232,58 @@ async def delete_task(
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> None:
-    """Delete a task."""
-    task = await get_task_or_404(db, task_id, user.id)
+    """Delete a task (soft if dependency graph blocks hard delete)."""
+    task = await get_active_task_or_404(db, task_id, user.id)
     goal_id = task.goal_id
-    
-    await db.delete(task)
-    
-    # Update goal progress
+
+    if task.goal_id is not None or await task_has_dependency_edges(db, task.id):
+        task.record_state = DELETED
+        task.updated_at = utc_now()
+    else:
+        await db.delete(task)
+
     await update_goal_progress(db, goal_id)
-    
     await db.commit()
+
+
+@router.post(
+    "/{task_id}/pause",
+    response_model=TaskResponse,
+    summary="Pause task",
+)
+async def pause_task(
+    task_id: str,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> TaskResponse:
+    """Pause an active task (reversible with /unpause)."""
+    task = await get_active_task_or_404(db, task_id, user.id)
+    task.record_state = PAUSED
+    task.updated_at = utc_now()
+    await db.commit()
+    task = await get_task_or_404(db, task.id, user.id)
+    return task_to_response(task)
+
+
+@router.post(
+    "/{task_id}/unpause",
+    response_model=TaskResponse,
+    summary="Unpause task",
+)
+async def unpause_task(
+    task_id: str,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> TaskResponse:
+    """Restore a paused task to active."""
+    task = await get_task_or_404(db, task_id, user.id)
+    if task.record_state != PAUSED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Task is not paused",
+        )
+    task.record_state = ACTIVE
+    task.updated_at = utc_now()
+    await db.commit()
+    task = await get_task_or_404(db, task.id, user.id)
+    return task_to_response(task)

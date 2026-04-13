@@ -2,6 +2,7 @@
 Pydantic schemas for Goals API.
 """
 from datetime import date, datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -53,6 +54,12 @@ class GoalResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     completed_at: datetime | None = None
+
+    # Phase 4j
+    record_state: str = "active"
+    archived_at: datetime | None = None
+    archive_tracking_mode: str | None = None
+    is_aligned_with_priorities: bool = True
 
     # Linked priorities (populated via eager loading)
     priorities: list[PriorityInfo] = []
@@ -123,6 +130,42 @@ class GoalRescheduleItem(BaseModel):
 
     goal_id: str
     new_target_date: date
+
+
+# ============================================================================
+# Phase 4j — Archive
+# ============================================================================
+
+
+class ArchivePreviewTaskItem(BaseModel):
+    """One task that needs a resolution before archiving."""
+
+    task_id: str
+    goal_id: str | None = None
+    title: str
+
+
+class ArchivePreviewResponse(BaseModel):
+    """Preview of goal archive impact."""
+
+    goal_id: str
+    subtree_goal_ids: list[str]
+    tasks_requiring_resolution: list[ArchivePreviewTaskItem]
+
+
+class TaskResolutionItem(BaseModel):
+    """Per-task choice when archiving a goal subtree."""
+
+    task_id: str
+    action: Literal["reassign", "keep_unaligned", "pause_task", "archive_task"]
+    goal_id: str | None = None
+
+
+class ArchiveGoalRequest(BaseModel):
+    """Commit goal archive with mandatory task resolutions."""
+
+    tracking_mode: Literal["failed", "ignored"]
+    task_resolutions: list[TaskResolutionItem] = Field(default_factory=list)
 
 
 # ============================================================================

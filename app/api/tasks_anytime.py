@@ -24,6 +24,7 @@ from app.api.helpers.task_helpers import (
     task_to_response,
     reorder_anytime_task,
 )
+from app.record_state import ACTIVE
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
@@ -57,6 +58,7 @@ async def list_anytime_tasks(
         .where(
             Task.user_id == user.id,
             Task.scheduling_mode == "anytime",
+            Task.record_state == ACTIVE,
         )
     )
     

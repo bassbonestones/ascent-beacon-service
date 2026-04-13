@@ -10,6 +10,25 @@ from sqlalchemy.orm import selectinload
 
 from app.models import Goal, GoalPriorityLink, Priority
 from app.schemas.goals import GoalResponse, GoalWithSubGoalsResponse, PriorityInfo
+from app.record_state import DELETED, list_query_states
+
+
+def _goal_str_field(goal: object, name: str, default: str | None) -> str | None:
+    v = getattr(goal, name, default)
+    if isinstance(v, str):
+        return v
+    return default
+
+
+def _goal_dt_field(goal: object, name: str) -> datetime | None:
+    if not hasattr(goal, name):
+        return None
+    v = getattr(goal, name)
+    if v is None:
+        return None
+    if isinstance(v, datetime):
+        return v
+    return None
 
 
 async def get_goal_or_404(
@@ -30,6 +49,26 @@ async def get_goal_or_404(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Goal not found",
+        )
+    if (_goal_str_field(goal, "record_state", "active") or "active") == DELETED:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Goal not found",
+        )
+    return goal
+
+
+async def get_active_goal_or_404(
+    db: AsyncSession, goal_id: str, user_id: str
+) -> Goal:
+    """Goal must exist, belong to user, and be ``record_state == active``."""
+    from app.record_state import ACTIVE
+
+    goal = await get_goal_or_404(db, goal_id, user_id)
+    if (_goal_str_field(goal, "record_state", "active") or "active") != ACTIVE:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Goal is not active",
         )
     return goal
 
@@ -74,6 +113,7 @@ def _extract_priorities_from_goal(goal: Goal) -> list[PriorityInfo]:
 
 def goal_to_response(goal: Goal) -> GoalResponse:
     """Convert a Goal model to GoalResponse schema."""
+    pr = _extract_priorities_from_goal(goal)
     return GoalResponse(
         id=goal.id,
         user_id=goal.user_id,
@@ -89,12 +129,17 @@ def goal_to_response(goal: Goal) -> GoalResponse:
         created_at=goal.created_at,
         updated_at=goal.updated_at,
         completed_at=goal.completed_at,
-        priorities=_extract_priorities_from_goal(goal),
+        record_state=_goal_str_field(goal, "record_state", "active") or "active",
+        archived_at=_goal_dt_field(goal, "archived_at"),
+        archive_tracking_mode=_goal_str_field(goal, "archive_tracking_mode", None),
+        is_aligned_with_priorities=len(pr) > 0,
+        priorities=pr,
     )
 
 
 def goal_to_tree_response(goal: Goal, sub_goals: list["GoalWithSubGoalsResponse"]) -> GoalWithSubGoalsResponse:
     """Convert a Goal model to GoalWithSubGoalsResponse schema."""
+    pr = _extract_priorities_from_goal(goal)
     return GoalWithSubGoalsResponse(
         id=goal.id,
         user_id=goal.user_id,
@@ -110,7 +155,11 @@ def goal_to_tree_response(goal: Goal, sub_goals: list["GoalWithSubGoalsResponse"
         created_at=goal.created_at,
         updated_at=goal.updated_at,
         completed_at=goal.completed_at,
-        priorities=_extract_priorities_from_goal(goal),
+        record_state=_goal_str_field(goal, "record_state", "active") or "active",
+        archived_at=_goal_dt_field(goal, "archived_at"),
+        archive_tracking_mode=_goal_str_field(goal, "archive_tracking_mode", None),
+        is_aligned_with_priorities=len(pr) > 0,
+        priorities=pr,
         sub_goals=sub_goals,
     )
 
@@ -137,9 +186,12 @@ async def create_priority_links(
 
 async def get_reschedule_count(db: AsyncSession, user_id: str) -> int:
     """Count goals past target date that need rescheduling."""
+    from app.record_state import ACTIVE
+
     result = await db.execute(
         select(Goal).where(
             Goal.user_id == user_id,
+            Goal.record_state == ACTIVE,
             Goal.target_date < date.today(),
             Goal.status.notin_(["completed", "abandoned"]),
         )
@@ -210,7 +262,7 @@ async def validate_parent_goal(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Goal cannot be its own parent",
             )
-        await get_goal_or_404(db, parent_goal_id, user_id)
+        await get_active_goal_or_404(db, parent_goal_id, user_id)
 
 
 async def reschedule_goals_bulk(
@@ -222,7 +274,7 @@ async def reschedule_goals_bulk(
     """Reschedule multiple goals and return their responses."""
     updated_goals = []
     for goal_id, new_date in goal_updates:
-        goal = await get_goal_or_404(db, goal_id, user_id)
+        goal = await get_active_goal_or_404(db, goal_id, user_id)
         goal.target_date = new_date
         goal.updated_at = now
         updated_goals.append(goal)
@@ -263,11 +315,17 @@ async def list_goals_query(
     include_completed: bool = False,
     parent_only: bool = False,
     past_target_date: bool = False,
+    *,
+    include_paused: bool = False,
+    include_archived: bool = False,
 ) -> list[Goal]:
     """Build and execute goal list query with filters."""
+    states = list_query_states(
+        include_paused=include_paused, include_archived=include_archived
+    )
     query = (
         select(Goal)
-        .where(Goal.user_id == user_id)
+        .where(Goal.user_id == user_id, Goal.record_state.in_(states))
         .options(
             selectinload(Goal.priority_links)
             .selectinload(GoalPriorityLink.priority)

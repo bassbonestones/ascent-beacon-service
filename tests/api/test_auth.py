@@ -761,7 +761,7 @@ async def test_auth_refresh_with_malformed_token(unauthenticated_client: AsyncCl
 
 
 @pytest.mark.asyncio
-async def test_refresh_token_invalid(unauthenticated_client: AsyncClient):
+async def test_refresh_token_invalid_rejects_unauthenticated_client_request(unauthenticated_client: AsyncClient):
     """Test refresh token with invalid token."""
     response = await unauthenticated_client.post(
         "/auth/refresh",
@@ -769,3 +769,62 @@ async def test_refresh_token_invalid(unauthenticated_client: AsyncClient):
     )
     # Should fail with 401 or similar
     assert response.status_code in [401, 422]
+
+
+# ---- migrated from tests/mocked/test_pure_functions_services_auth_migrated.py ----
+
+"""Migrated pure-function service auth/security tests."""
+
+from tests.core.test_security import *  # noqa: F403
+
+
+# ---- migrated from tests/mocked/test_services_auth_migrated.py ----
+
+"""Migrated auth service tests split from mixed services file."""
+
+import pytest
+from httpx import AsyncClient
+
+
+@pytest.mark.asyncio
+async def test_auth_invalid_refresh_token(client: AsyncClient):
+    response = await client.post(
+        "/auth/refresh",
+        json={"refresh_token": "invalid_token_here"},
+    )
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_auth_logout_invalid_token(client: AsyncClient):
+    response = await client.post(
+        "/auth/logout",
+        json={"refresh_token": "invalid_token"},
+    )
+    assert response.status_code == 401
+
+
+# ---- migrated from tests/mocked/test_services_external_auth.py ----
+
+"""Auth API error scenarios."""
+
+import pytest
+from httpx import AsyncClient
+
+
+@pytest.mark.asyncio
+async def test_auth_invalid_refresh_token__legacyservices_external_auth(client: AsyncClient):
+    response = await client.post(
+        "/auth/refresh",
+        json={"refresh_token": "invalid_token_here"},
+    )
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_auth_logout_invalid_token__legacyservices_external_auth(client: AsyncClient):
+    response = await client.post(
+        "/auth/logout",
+        json={"refresh_token": "invalid_token"},
+    )
+    assert response.status_code == 401

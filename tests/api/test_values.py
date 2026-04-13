@@ -7,6 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.value import Value, ValueRevision
 from app.models.user import User
+from app.models.priority import Priority, PriorityRevision
+from app.models.priority_value_link import PriorityValueLink
+from unittest.mock import AsyncMock, patch
 
 
 @pytest.mark.asyncio
@@ -233,6 +236,104 @@ async def test_get_linked_priorities_empty(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_acknowledge_insight_without_active_revision_returns_400(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """If active revision is missing and no revision_id provided, endpoint returns 400."""
+    create_response = await client.post(
+        "/values",
+        json={"statement": "No active revision", "weight_raw": 50, "origin": "declared"},
+    )
+    value_id = create_response.json()["id"]
+
+    value = await db_session.get(Value, value_id)
+    assert value is not None
+    value.active_revision_id = None
+    await db_session.commit()
+
+    response = await client.post(f"/values/{value_id}/insights/acknowledge", json={})
+    assert response.status_code == 400
+    assert "No active revision to acknowledge" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_delete_value_conflict_and_cascade_flow(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    test_user: User,
+) -> None:
+    """Delete without cascade conflicts when linked; cascade deletes successfully."""
+    value_response = await client.post(
+        "/values",
+        json={"statement": "Linked value", "weight_raw": 60, "origin": "declared"},
+    )
+    assert value_response.status_code == 201
+    value_id = value_response.json()["id"]
+
+    value = await db_session.get(Value, value_id)
+    assert value is not None and value.active_revision_id is not None
+
+    priority = Priority(user_id=test_user.id, is_stashed=False)
+    db_session.add(priority)
+    await db_session.flush()
+
+    revision = PriorityRevision(
+        priority_id=priority.id,
+        title="Linked priority",
+        why_matters="Has linked value",
+        score=3,
+        scope="ongoing",
+        is_active=True,
+    )
+    db_session.add(revision)
+    await db_session.flush()
+    priority.active_revision_id = revision.id
+
+    link = PriorityValueLink(
+        priority_revision_id=revision.id,
+        value_revision_id=value.active_revision_id,
+        link_weight=1.0,
+    )
+    db_session.add(link)
+    await db_session.commit()
+
+    conflict = await client.delete(f"/values/{value_id}")
+    assert conflict.status_code == 409
+    assert "affected_priorities" in conflict.json()["detail"]
+
+    cascade = await client.delete(f"/values/{value_id}", params={"cascade": "true"})
+    assert cascade.status_code == 204
+
+
+@pytest.mark.asyncio
+async def test_create_value_revision_includes_insight_when_similarity_returns_one(
+    client: AsyncClient,
+) -> None:
+    """Covers insight-injected response path during revision creation."""
+    create_response = await client.post(
+        "/values",
+        json={"statement": "Seed value", "weight_raw": 50, "origin": "declared"},
+    )
+    value_id = create_response.json()["id"]
+
+    fake_insight = {
+        "type": "similarity",
+        "message": "Potential overlap",
+        "similar_value_id": value_id,
+        "similarity_score": 0.91,
+    }
+    with patch("app.api.values.process_value_similarity", AsyncMock(return_value=fake_insight)):
+        response = await client.post(
+            f"/values/{value_id}/revisions",
+            json={"statement": "Seed value refined", "weight_raw": 55, "origin": "refined"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["insights"]
+
+
+@pytest.mark.asyncio
 async def test_value_origin_types(client: AsyncClient):
     """Test creating values with different origin types."""
     origins = ["declared", "discovered", "refined", "ai_suggested"]
@@ -456,7 +557,7 @@ async def test_update_value_with_revision(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_get_value_history(client: AsyncClient):
+async def test_get_value_history_block_2(client: AsyncClient):
     """Test getting revision history for a value."""
     # Create a value
     response = await client.post(
@@ -479,7 +580,7 @@ async def test_get_value_history(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_get_value_history_not_found(client: AsyncClient):
+async def test_get_value_history_not_found_block_2(client: AsyncClient):
     """Test getting history for non-existent value."""
     response = await client.get("/values/00000000-0000-0000-0000-000000000000/history")
     assert response.status_code == 404
@@ -527,7 +628,7 @@ async def test_create_value_revision_not_found(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_delete_value(client: AsyncClient):
+async def test_delete_value_block_2(client: AsyncClient):
     """Test deleting a value."""
     # Create a value
     response = await client.post(
@@ -547,7 +648,7 @@ async def test_delete_value(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_delete_value_not_found(client: AsyncClient):
+async def test_delete_value_not_found_block_2(client: AsyncClient):
     """Test deleting non-existent value."""
     response = await client.delete("/values/00000000-0000-0000-0000-000000000000")
     assert response.status_code == 404
@@ -575,7 +676,7 @@ async def test_get_linked_priorities(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_get_linked_priorities_not_found(client: AsyncClient):
+async def test_get_linked_priorities_not_found_block_2(client: AsyncClient):
     """Test getting linked priorities for non-existent value."""
     response = await client.get("/values/00000000-0000-0000-0000-000000000000/linked-priorities")
     assert response.status_code == 404
@@ -587,7 +688,7 @@ async def test_get_linked_priorities_not_found(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_create_value_revision(client: AsyncClient):
+async def test_create_value_revision_block_2(client: AsyncClient):
     """Test creating a new revision for an existing value via PUT."""
     # Create initial value
     create_response = await client.post(
@@ -647,7 +748,7 @@ async def test_update_value(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_update_value_not_found(client: AsyncClient):
+async def test_update_value_not_found_block_2(client: AsyncClient):
     """Test updating a non-existent value."""
     response = await client.put(
         "/values/00000000-0000-0000-0000-000000000000",
@@ -657,7 +758,7 @@ async def test_update_value_not_found(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_delete_value(client: AsyncClient):
+async def test_delete_value_block_3(client: AsyncClient):
     """Test soft-deleting a value."""
     # Create value
     create_response = await client.post(
@@ -676,14 +777,14 @@ async def test_delete_value(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_delete_value_not_found(client: AsyncClient):
+async def test_delete_value_not_found_block_3(client: AsyncClient):
     """Test deleting a non-existent value."""
     response = await client.delete("/values/00000000-0000-0000-0000-000000000000")
     assert response.status_code == 404
 
 
 @pytest.mark.asyncio
-async def test_get_value_history(client: AsyncClient):
+async def test_get_value_history_block_3(client: AsyncClient):
     """Test getting revision history for a value."""
     # Create value
     create_response = await client.post(
@@ -709,7 +810,7 @@ async def test_get_value_history(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_get_value_history_not_found(client: AsyncClient):
+async def test_get_value_history_not_found_block_3(client: AsyncClient):
     """Test getting history for non-existent value."""
     response = await client.get("/values/00000000-0000-0000-0000-000000000000/history")
     assert response.status_code == 404
@@ -819,7 +920,7 @@ async def test_create_value_revision_with_different_weight(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_create_value_revision_not_found(client: AsyncClient):
+async def test_create_value_revision_not_found_block_2(client: AsyncClient):
     """Test creating revision for non-existent value."""
     response = await client.post(
         "/values/00000000-0000-0000-0000-000000000000/revisions",
@@ -1291,5 +1392,372 @@ async def test_value_with_max_weight(client: AsyncClient):
             "weight_raw": 100,
             "origin": "declared",
         },
+    )
+    assert response.status_code == 201
+
+
+# ---- migrated from tests/mocked/test_services_values_migrated.py ----
+
+"""Unit tests with mocked external services and error scenarios."""
+
+import pytest
+from httpx import AsyncClient
+from unittest.mock import patch, AsyncMock, MagicMock
+from datetime import datetime, timezone, timedelta
+import json
+
+
+# ============================================================================
+# Mock Fixtures
+# ============================================================================
+
+
+@pytest.fixture
+def mock_validate_priority():
+    """Mock priority validation to always return valid."""
+    with patch("app.services.priority_validation.validate_priority") as mock:
+        async def async_return(*args, **kwargs):
+            return {
+                "overall_valid": True,
+                "name_valid": True,
+                "why_valid": True,
+                "name_feedback": [],
+                "why_feedback": [],
+                "why_passed_rules": {"specificity": True, "actionable": True},
+                "name_rewrite": None,
+                "why_rewrite": None,
+                "rule_examples": None,
+            }
+        mock.side_effect = async_return
+        yield mock
+
+
+@pytest.fixture
+def mock_llm_alignment():
+    """Mock LLM service for alignment reflection."""
+    with patch("app.api.alignment.LLMService.get_alignment_reflection") as mock:
+        async def async_return(*args, **kwargs):
+            return "Your values and priorities are well aligned."
+        mock.side_effect = async_return
+        yield mock
+
+
+@pytest.fixture
+def mock_llm_recommendation():
+    """Mock LLM service for assistant recommendations."""
+    with patch("app.services.llm_service.LLMService.get_recommendation") as mock:
+        async def async_return(*args, **kwargs):
+            return {
+                "choices": [{
+                    "message": {
+                        "content": "I can help you with that.",
+                        "tool_calls": None,
+                    }
+                }]
+            }
+        mock.side_effect = async_return
+        yield mock
+
+
+# ============================================================================
+# Alignment API Tests with Mocked LLM
+# ============================================================================
+
+@pytest.mark.asyncio
+async def test_alignment_with_no_values_mocked(client: AsyncClient, mock_llm_alignment):
+    """Test alignment check with no values returns defaults."""
+    response = await client.post("/alignment/check")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["declared"] == {}
+    assert data["implied"] == {}
+    assert data["total_variation_distance"] == 0.0
+    assert data["alignment_fit"] == 1.0
+
+
+@pytest.mark.asyncio
+async def test_alignment_with_values_no_priorities_mocked(
+    client: AsyncClient, mock_llm_alignment
+):
+    """Test alignment with values but no anchored priorities."""
+    # Create value
+    val = await client.post(
+        "/values",
+        json={"statement": "Test Value", "weight_raw": 70, "origin": "declared"},
+    )
+    assert val.status_code == 201
+
+    response = await client.post("/alignment/check")
+    assert response.status_code == 200
+    data = response.json()
+    # Has declared but no implied (no anchored priorities)
+    assert len(data["declared"]) >= 1
+    assert data["implied"] == {}
+
+
+@pytest.mark.asyncio
+async def test_alignment_full_calculation_mocked(
+    client: AsyncClient, mock_validate_priority, mock_llm_alignment
+):
+    """Test alignment with values and anchored priorities computes TVD."""
+    # Create value
+    val = await client.post(
+        "/values",
+        json={"statement": "Core Value", "weight_raw": 100, "origin": "declared"},
+    )
+    val_id = val.json()["id"]
+
+    # Create priority linked to value
+    priority = await client.post(
+        "/priorities",
+        json={
+            "title": "Priority For Alignment",
+            "why_matters": "Testing alignment calculation with linked values",
+            "score": 5,
+            "value_ids": [val_id],
+        },
+    )
+    p_id = priority.json()["id"]
+
+    # Anchor the priority
+    await client.post(f"/priorities/{p_id}/anchor")
+
+    response = await client.post("/alignment/check")
+    assert response.status_code == 200
+    data = response.json()
+    assert "declared" in data
+    assert "implied" in data
+    assert "total_variation_distance" in data
+    assert "alignment_fit" in data
+    assert "reflection" in data
+
+
+@pytest.mark.asyncio
+async def test_alignment_multiple_priorities_mocked(
+    client: AsyncClient, mock_validate_priority, mock_llm_alignment
+):
+    """Test alignment with multiple anchored priorities."""
+    # Create values
+    val1 = await client.post(
+        "/values",
+        json={"statement": "Value One", "weight_raw": 60, "origin": "declared"},
+    )
+    val1_id = val1.json()["id"]
+
+    val2 = await client.post(
+        "/values",
+        json={"statement": "Value Two", "weight_raw": 40, "origin": "declared"},
+    )
+    val2_id = val2.json()["id"]
+
+    # Create priorities linked to different values
+    p1 = await client.post(
+        "/priorities",
+        json={
+            "title": "Priority One",
+            "why_matters": "First priority for alignment test",
+            "score": 4,
+            "value_ids": [val1_id],
+        },
+    )
+    await client.post(f"/priorities/{p1.json()['id']}/anchor")
+
+    p2 = await client.post(
+        "/priorities",
+        json={
+            "title": "Priority Two",
+            "why_matters": "Second priority for alignment test",
+            "score": 3,
+            "value_ids": [val2_id],
+        },
+    )
+    await client.post(f"/priorities/{p2.json()['id']}/anchor")
+
+    response = await client.post("/alignment/check")
+    assert response.status_code == 200
+    data = response.json()
+    # Should have computed implied weights
+    assert len(data["implied"]) >= 1
+
+
+# ============================================================================
+# Assistant API Tests with Mocked LLM
+# ============================================================================
+
+@pytest.mark.asyncio
+async def test_value_not_found(client: AsyncClient):
+    """Test getting non-existent value history."""
+    response = await client.get("/values/00000000-0000-0000-0000-000000000000/history")
+    assert response.status_code == 404
+
+@pytest.mark.asyncio
+async def test_value_delete_not_found(client: AsyncClient):
+    """Test deleting non-existent value."""
+    response = await client.delete("/values/00000000-0000-0000-0000-000000000000")
+    assert response.status_code == 404
+
+@pytest.mark.asyncio
+async def test_value_update_not_found(client: AsyncClient):
+    """Test updating non-existent value."""
+    response = await client.put(
+        "/values/00000000-0000-0000-0000-000000000000",
+        json={"statement": "Updated", "weight_raw": 50},
+    )
+    assert response.status_code == 404
+
+@pytest.mark.asyncio
+async def test_value_revision_not_found(client: AsyncClient):
+    """Test creating revision for non-existent value."""
+    response = await client.post(
+        "/values/00000000-0000-0000-0000-000000000000/revisions",
+        json={"statement": "New Statement", "weight_raw": 50},
+    )
+    assert response.status_code == 404
+
+@pytest.mark.asyncio
+async def test_value_acknowledge_insight_not_found(client: AsyncClient):
+    """Test acknowledging insight for non-existent value."""
+    response = await client.post(
+        "/values/00000000-0000-0000-0000-000000000000/insights/acknowledge",
+        json={},
+    )
+    assert response.status_code == 404
+
+
+# ============================================================================
+# Links API Error Scenarios
+# ============================================================================
+
+@pytest.mark.asyncio
+async def test_value_max_weight_validation(client: AsyncClient):
+    """Test value weight boundaries."""
+    # Very high weight
+    response = await client.post(
+        "/values",
+        json={"statement": "High Weight Value", "weight_raw": 10000, "origin": "declared"},
+    )
+    # Should either accept or reject based on validation
+    assert response.status_code == 201
+
+
+# ---- migrated from tests/integration/test_api_helpers_values.py ----
+
+"""Integration coverage for values helper behavior."""
+
+import pytest
+from httpx import AsyncClient
+from unittest.mock import patch
+
+
+@pytest.fixture
+def mock_validate_priority():
+    """Mock priority validation."""
+    with patch("app.services.priority_validation.validate_priority") as mock:
+        async def async_return(*args, **kwargs):
+            return {
+                "overall_valid": True,
+                "name_valid": True,
+                "why_valid": True,
+                "name_feedback": [],
+                "why_feedback": [],
+                "why_passed_rules": {"specificity": True, "actionable": True},
+                "name_rewrite": None,
+                "why_rewrite": None,
+                "rule_examples": None,
+            }
+
+        mock.side_effect = async_return
+        yield mock
+
+
+@pytest.mark.asyncio
+async def test_value_edit_with_linked_priority(client: AsyncClient, mock_validate_priority):
+    """Test editing a value that has linked priorities triggers impact calculation."""
+    val = await client.post(
+        "/values",
+        json={"statement": "Original linked value", "weight_raw": 70, "origin": "declared"},
+    )
+    val_id = val.json()["id"]
+
+    priority = await client.post(
+        "/priorities",
+        json={
+            "title": "Impact Test Priority",
+            "why_matters": "Testing value impact calculation",
+            "score": 4,
+            "value_ids": [val_id],
+        },
+    )
+    p_id = priority.json()["id"]
+
+    await client.post(f"/priorities/{p_id}/anchor")
+
+    response = await client.put(
+        f"/values/{val_id}",
+        json={
+            "statement": "Completely different statement that is much longer",
+            "weight_raw": 80,
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "active_revision" in data
+
+
+@pytest.mark.asyncio
+async def test_value_revision_with_linked_priority(client: AsyncClient, mock_validate_priority):
+    """Test creating value revision with linked priority."""
+    val = await client.post(
+        "/values",
+        json={"statement": "Revision test value", "weight_raw": 60, "origin": "declared"},
+    )
+    val_id = val.json()["id"]
+
+    await client.post(
+        "/priorities",
+        json={
+            "title": "Revision Link Priority",
+            "why_matters": "Testing value revision with links",
+            "score": 3,
+            "value_ids": [val_id],
+        },
+    )
+
+    response = await client.post(
+        f"/values/{val_id}/revisions",
+        json={"statement": "A very different new statement", "weight_raw": 50},
+    )
+    assert response.status_code in [200, 201]
+
+
+@pytest.mark.asyncio
+async def test_similar_values_detection(client: AsyncClient):
+    """Test that similar values are detected."""
+    await client.post(
+        "/values",
+        json={"statement": "I value creativity and innovation", "weight_raw": 70, "origin": "declared"},
+    )
+
+    response = await client.post(
+        "/values",
+        json={"statement": "I value creative expression and innovation", "weight_raw": 60, "origin": "declared"},
+    )
+    assert response.status_code == 201
+    data = response.json()
+    if "insights" in data:
+        pass
+
+
+@pytest.mark.asyncio
+async def test_value_different_weights(client: AsyncClient):
+    """Test values with very different weights."""
+    await client.post(
+        "/values",
+        json={"statement": "Very important value", "weight_raw": 100, "origin": "declared"},
+    )
+
+    response = await client.post(
+        "/values",
+        json={"statement": "Less important value", "weight_raw": 10, "origin": "declared"},
     )
     assert response.status_code == 201

@@ -303,7 +303,7 @@ async def test_complete_goal_sets_completed_at(client: AsyncClient):
     )
 
     assert response.status_code == 200
-    assert response.json()["completed_at"] is not None
+    assert isinstance(response.json()["completed_at"], str)
 
 
 @pytest.mark.asyncio
@@ -961,7 +961,7 @@ async def test_list_goals_with_status_filter(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_list_goals_parent_only(client: AsyncClient):
+async def test_list_goals_parent_only_block_2(client: AsyncClient):
     """Test listing only parent goals (no parent)."""
     # Create parent goal
     parent_response = await client.post("/goals", json={"title": "Parent Only Goal"})
@@ -1042,7 +1042,7 @@ async def test_update_goal_with_description(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_delete_goal(client: AsyncClient):
+async def test_delete_goal_block_2(client: AsyncClient):
     """Test deleting a goal."""
     response = await client.post("/goals", json={"title": "Delete Me"})
     goal_id = response.json()["id"]
@@ -1056,7 +1056,7 @@ async def test_delete_goal(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_delete_goal_not_found(client: AsyncClient):
+async def test_delete_goal_not_found_block_2(client: AsyncClient):
     """Test deleting non-existent goal."""
     response = await client.delete("/goals/00000000-0000-0000-0000-000000000000")
     assert response.status_code == 404
@@ -1172,7 +1172,7 @@ async def test_list_goals_by_priority(client: AsyncClient, mock_validate_priorit
 
 
 @pytest.mark.asyncio
-async def test_list_goals_past_target_date(client: AsyncClient):
+async def test_list_goals_past_target_date_block_2(client: AsyncClient):
     """Test filtering goals past their target date."""
     from datetime import datetime, timezone, timedelta
 
@@ -1201,7 +1201,7 @@ async def test_list_goals_past_target_date(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_set_goal_priorities(client: AsyncClient, mock_validate_priority_goals):
+async def test_set_goal_priorities_block_2(client: AsyncClient, mock_validate_priority_goals):
     """Test replacing all priority links for a goal."""
     # Create priorities
     p1_response = await client.post(
@@ -1323,7 +1323,7 @@ async def test_remove_goal_priority(client: AsyncClient, mock_validate_priority_
 
 
 @pytest.mark.asyncio
-async def test_get_goal(client: AsyncClient):
+async def test_get_goal_block_2(client: AsyncClient):
     """Test getting a single goal by ID."""
     response = await client.post("/goals", json={"title": "Get single goal"})
     goal_id = response.json()["id"]
@@ -1334,7 +1334,7 @@ async def test_get_goal(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_get_goal_not_found(client: AsyncClient):
+async def test_get_goal_not_found_block_2(client: AsyncClient):
     """Test getting non-existent goal."""
     response = await client.get("/goals/00000000-0000-0000-0000-000000000000")
     assert response.status_code == 404
@@ -1553,7 +1553,7 @@ async def test_list_goals_with_priority_filter(client: AsyncClient, mock_validat
 
 
 @pytest.mark.asyncio
-async def test_list_goals_with_status_filter(client: AsyncClient):
+async def test_list_goals_with_status_filter_block_2(client: AsyncClient):
     """Test listing goals filtered by status."""
     response = await client.get("/goals?status=active")
     assert response.status_code == 200
@@ -1571,7 +1571,7 @@ async def test_list_goals_with_status_filter(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_get_goal_tree(client: AsyncClient):
+async def test_get_goal_tree_block_2(client: AsyncClient):
     """Test getting a goal with its full sub-goal tree."""
     # Create parent
     parent_response = await client.post("/goals", json={"title": "Parent Goal"})
@@ -1599,7 +1599,7 @@ async def test_get_goal_tree(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_get_goal_tree_not_found(client: AsyncClient):
+async def test_get_goal_tree_not_found_block_2(client: AsyncClient):
     """Test getting tree for non-existent goal."""
     response = await client.get("/goals/00000000-0000-0000-0000-000000000000/tree")
     assert response.status_code == 404
@@ -1641,7 +1641,7 @@ async def test_update_goal_status_to_completed(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_update_goal_status_not_found(client: AsyncClient):
+async def test_update_goal_status_not_found_block_2(client: AsyncClient):
     """Test status update for non-existent goal."""
     response = await client.patch(
         "/goals/00000000-0000-0000-0000-000000000000/status",
@@ -1656,7 +1656,7 @@ async def test_update_goal_status_not_found(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_delete_goal(client: AsyncClient):
+async def test_delete_goal_block_3(client: AsyncClient):
     """Test deleting a goal."""
     goal_response = await client.post("/goals", json={"title": "Delete me"})
     goal_id = goal_response.json()["id"]
@@ -1692,7 +1692,7 @@ async def test_delete_goal_cascades_to_subgoals(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_delete_goal_not_found(client: AsyncClient):
+async def test_delete_goal_not_found_block_3(client: AsyncClient):
     """Test deleting non-existent goal."""
     response = await client.delete("/goals/00000000-0000-0000-0000-000000000000")
     assert response.status_code == 404
@@ -1704,7 +1704,7 @@ async def test_delete_goal_not_found(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_reschedule_goals(client: AsyncClient):
+async def test_reschedule_goals_block_2(client: AsyncClient):
     """Test rescheduling multiple goals at once."""
     from datetime import date, timedelta
 
@@ -1747,7 +1747,7 @@ async def test_reschedule_empty_list(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_update_goal_parent(client: AsyncClient):
+async def test_update_goal_parent_block_2(client: AsyncClient):
     """Test moving a goal to a new parent."""
     # Create two parents
     parent1_response = await client.post("/goals", json={"title": "Parent 1"})
@@ -1822,7 +1822,7 @@ def mock_validate_priority():
 
 
 @pytest.mark.asyncio
-async def test_update_goal_status(client: AsyncClient):
+async def test_update_goal_status_block_2(client: AsyncClient):
     """Test updating goal status."""
     # Create goal
     create_resp = await client.post("/goals", json={"title": "Test Goal"})
@@ -1846,7 +1846,7 @@ async def test_update_goal_title(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_update_goal_description(client: AsyncClient):
+async def test_update_goal_description_block_2(client: AsyncClient):
     """Test updating goal with description."""
     create_resp = await client.post("/goals", json={"title": "Goal with Desc"})
     goal_id = create_resp.json()["id"]
@@ -1860,7 +1860,7 @@ async def test_update_goal_description(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_update_goal_not_found(client: AsyncClient):
+async def test_update_goal_not_found_block_2(client: AsyncClient):
     """Test updating non-existent goal."""
     response = await client.patch(
         "/goals/00000000-0000-0000-0000-000000000000",
@@ -1880,7 +1880,7 @@ async def test_delete_goal_success(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_delete_goal_not_found(client: AsyncClient):
+async def test_delete_goal_not_found_block_4(client: AsyncClient):
     """Test deleting non-existent goal."""
     response = await client.delete("/goals/00000000-0000-0000-0000-000000000000")
     assert response.status_code == 404
@@ -1898,14 +1898,14 @@ async def test_get_goal_by_id(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_get_goal_not_found(client: AsyncClient):
+async def test_get_goal_not_found_block_3(client: AsyncClient):
     """Test getting non-existent goal."""
     response = await client.get("/goals/00000000-0000-0000-0000-000000000000")
     assert response.status_code == 404
 
 
 @pytest.mark.asyncio
-async def test_list_goals_empty(client: AsyncClient):
+async def test_list_goals_empty_block_2(client: AsyncClient):
     """Test listing goals when none exist."""
     response = await client.get("/goals")
     assert response.status_code == 200
@@ -1913,7 +1913,7 @@ async def test_list_goals_empty(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_list_goals_with_status_filter(client: AsyncClient):
+async def test_list_goals_with_status_filter_block_3(client: AsyncClient):
     """Test listing goals with status filter."""
     # Create goals
     await client.post("/goals", json={"title": "In Progress Goal"})
@@ -3085,7 +3085,7 @@ async def test_create_goal_with_priority_ids(client: AsyncClient, mock_validate_
 
 
 @pytest.mark.asyncio
-async def test_list_goals_past_target_date(client: AsyncClient):
+async def test_list_goals_past_target_date_block_3(client: AsyncClient):
     """Test filtering goals by past target date."""
     from datetime import date, timedelta
 
@@ -3113,7 +3113,7 @@ async def test_list_goals_past_target_date(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_update_goal_parent(client: AsyncClient):
+async def test_update_goal_parent_block_3(client: AsyncClient):
     """Test updating goal parent_goal_id."""
     # Create parent goal
     parent_resp = await client.post(
@@ -3205,7 +3205,7 @@ async def test_reschedule_goals_bulk(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_update_goal_title(client: AsyncClient):
+async def test_update_goal_title_block_2(client: AsyncClient):
     """Test updating goal title field."""
     goal_resp = await client.post(
         "/goals",
@@ -3330,3 +3330,283 @@ async def test_goal_set_priorities_replaces_existing(client: AsyncClient, mock_v
     linked_ids = [p["id"] for p in response.json()["priorities"]]
     assert p2.json()["id"] in linked_ids
     assert p1.json()["id"] not in linked_ids
+
+
+# ---- migrated from tests/mocked/test_services_goals.py ----
+
+"""Goals API error scenarios."""
+
+from unittest.mock import patch
+
+import pytest
+from httpx import AsyncClient
+
+
+@pytest.fixture
+def mock_validate_priority():
+    """Mock priority validation to always return valid."""
+    with patch("app.services.priority_validation.validate_priority") as mock:
+        async def async_return(*args, **kwargs):
+            return {
+                "overall_valid": True,
+                "name_valid": True,
+                "why_valid": True,
+                "name_feedback": [],
+                "why_feedback": [],
+                "why_passed_rules": {"specificity": True, "actionable": True},
+                "name_rewrite": None,
+                "why_rewrite": None,
+                "rule_examples": None,
+            }
+
+        mock.side_effect = async_return
+        yield mock
+
+
+@pytest.mark.asyncio
+async def test_goal_invalid_parent_self_reference(client: AsyncClient):
+    """Test goal cannot be its own parent."""
+    goal = await client.post("/goals", json={"title": "Self Parent Test"})
+    goal_id = goal.json()["id"]
+
+    response = await client.patch(
+        f"/goals/{goal_id}",
+        json={"parent_goal_id": goal_id},
+    )
+    assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_goal_invalid_priority_link(client: AsyncClient):
+    """Test linking goal to non-existent priority fails."""
+    goal = await client.post("/goals", json={"title": "Invalid Link Test"})
+    goal_id = goal.json()["id"]
+
+    response = await client.post(
+        f"/goals/{goal_id}/priorities/00000000-0000-0000-0000-000000000000"
+    )
+    assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_goal_duplicate_priority_link(client: AsyncClient, mock_validate_priority):
+    """Test duplicate priority link fails."""
+    priority = await client.post(
+        "/priorities",
+        json={
+            "title": "Dup Link Test",
+            "why_matters": "Testing duplicate link validation",
+            "score": 3,
+        },
+    )
+    p_id = priority.json()["id"]
+
+    goal = await client.post("/goals", json={"title": "Dup Link Goal"})
+    goal_id = goal.json()["id"]
+
+    await client.post(f"/goals/{goal_id}/priorities/{p_id}")
+
+    response = await client.post(f"/goals/{goal_id}/priorities/{p_id}")
+    assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_goal_remove_nonexistent_priority_link(client: AsyncClient):
+    """Test removing priority link that doesn't exist."""
+    goal = await client.post("/goals", json={"title": "Remove Link Test"})
+    goal_id = goal.json()["id"]
+
+    response = await client.delete(
+        f"/goals/{goal_id}/priorities/00000000-0000-0000-0000-000000000000"
+    )
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_goal_invalid_status(client: AsyncClient):
+    """Test setting invalid goal status."""
+    goal = await client.post("/goals", json={"title": "Invalid Status Goal"})
+    goal_id = goal.json()["id"]
+
+    response = await client.patch(
+        f"/goals/{goal_id}",
+        json={"status": "invalid_status"},
+    )
+    assert response.status_code == 400
+
+
+# ---- migrated from tests/mocked/test_services_goals_migrated.py ----
+
+"""Unit tests with mocked external services and error scenarios."""
+
+import pytest
+from httpx import AsyncClient
+from unittest.mock import patch, AsyncMock, MagicMock
+from datetime import datetime, timezone, timedelta
+import json
+
+
+# ============================================================================
+# Mock Fixtures
+# ============================================================================
+
+
+@pytest.fixture
+def mock_validate_priority():
+    """Mock priority validation to always return valid."""
+    with patch("app.services.priority_validation.validate_priority") as mock:
+        async def async_return(*args, **kwargs):
+            return {
+                "overall_valid": True,
+                "name_valid": True,
+                "why_valid": True,
+                "name_feedback": [],
+                "why_feedback": [],
+                "why_passed_rules": {"specificity": True, "actionable": True},
+                "name_rewrite": None,
+                "why_rewrite": None,
+                "rule_examples": None,
+            }
+        mock.side_effect = async_return
+        yield mock
+
+
+@pytest.fixture
+def mock_llm_alignment():
+    """Mock LLM service for alignment reflection."""
+    with patch("app.api.alignment.LLMService.get_alignment_reflection") as mock:
+        async def async_return(*args, **kwargs):
+            return "Your values and priorities are well aligned."
+        mock.side_effect = async_return
+        yield mock
+
+
+@pytest.fixture
+def mock_llm_recommendation():
+    """Mock LLM service for assistant recommendations."""
+    with patch("app.services.llm_service.LLMService.get_recommendation") as mock:
+        async def async_return(*args, **kwargs):
+            return {
+                "choices": [{
+                    "message": {
+                        "content": "I can help you with that.",
+                        "tool_calls": None,
+                    }
+                }]
+            }
+        mock.side_effect = async_return
+        yield mock
+
+
+# ============================================================================
+# Alignment API Tests with Mocked LLM
+# ============================================================================
+
+@pytest.mark.asyncio
+async def test_goal_invalid_parent_self_reference__legacyservices_goals_migrated(client: AsyncClient):
+    """Test goal cannot be its own parent."""
+    goal = await client.post("/goals", json={"title": "Self Parent Test"})
+    goal_id = goal.json()["id"]
+
+    response = await client.patch(
+        f"/goals/{goal_id}",
+        json={"parent_goal_id": goal_id},
+    )
+    assert response.status_code == 400
+
+@pytest.mark.asyncio
+async def test_goal_invalid_priority_link__legacyservices_goals_migrated(client: AsyncClient):
+    """Test linking goal to non-existent priority fails."""
+    goal = await client.post("/goals", json={"title": "Invalid Link Test"})
+    goal_id = goal.json()["id"]
+
+    response = await client.post(
+        f"/goals/{goal_id}/priorities/00000000-0000-0000-0000-000000000000"
+    )
+    assert response.status_code == 400
+
+@pytest.mark.asyncio
+async def test_goal_duplicate_priority_link__legacyservices_goals_migrated(client: AsyncClient, mock_validate_priority):
+    """Test duplicate priority link fails."""
+    # Create priority
+    priority = await client.post(
+        "/priorities",
+        json={
+            "title": "Dup Link Test",
+            "why_matters": "Testing duplicate link validation",
+            "score": 3,
+        },
+    )
+    p_id = priority.json()["id"]
+
+    # Create goal
+    goal = await client.post("/goals", json={"title": "Dup Link Goal"})
+    goal_id = goal.json()["id"]
+
+    # First link
+    await client.post(f"/goals/{goal_id}/priorities/{p_id}")
+
+    # Duplicate should fail
+    response = await client.post(f"/goals/{goal_id}/priorities/{p_id}")
+    assert response.status_code == 400
+
+@pytest.mark.asyncio
+async def test_goal_remove_nonexistent_priority_link__legacyservices_goals_migrated(client: AsyncClient):
+    """Test removing priority link that doesn't exist."""
+    goal = await client.post("/goals", json={"title": "Remove Link Test"})
+    goal_id = goal.json()["id"]
+
+    response = await client.delete(
+        f"/goals/{goal_id}/priorities/00000000-0000-0000-0000-000000000000"
+    )
+    assert response.status_code == 404
+
+
+# ============================================================================
+# Tasks API Error Scenarios
+# ============================================================================
+
+@pytest.mark.asyncio
+async def test_goal_invalid_status__legacyservices_goals_migrated(client: AsyncClient):
+    """Test setting invalid goal status."""
+    goal = await client.post("/goals", json={"title": "Invalid Status Goal"})
+    goal_id = goal.json()["id"]
+
+    response = await client.patch(
+        f"/goals/{goal_id}",
+        json={"status": "invalid_status"},
+    )
+    assert response.status_code == 400
+
+
+# ---- migrated from tests/integration/test_api_helpers_goals.py ----
+
+"""Integration coverage for goals helper behavior."""
+
+import pytest
+from httpx import AsyncClient
+
+
+@pytest.mark.asyncio
+async def test_goal_delete(client: AsyncClient):
+    """Test deleting a goal."""
+    goal = await client.post("/goals", json={"title": "Delete Goal Test"})
+    goal_id = goal.json()["id"]
+
+    response = await client.delete(f"/goals/{goal_id}")
+    assert response.status_code == 204
+
+
+@pytest.mark.asyncio
+async def test_goal_delete_with_tasks(client: AsyncClient):
+    """Test deleting a goal that has tasks."""
+    goal = await client.post("/goals", json={"title": "Delete Goal With Tasks"})
+    goal_id = goal.json()["id"]
+
+    await client.post(
+        "/tasks",
+        json={"goal_id": goal_id, "title": "Task To Delete", "duration_minutes": 30},
+    )
+
+    response = await client.delete(f"/goals/{goal_id}")
+    assert response.status_code == 204

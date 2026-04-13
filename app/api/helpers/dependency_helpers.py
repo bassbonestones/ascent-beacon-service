@@ -9,6 +9,7 @@ from sqlalchemy.orm import selectinload
 from app.models import Task
 from app.models.dependency import DependencyRule
 from app.schemas.dependency import DependencyRuleResponse, TaskInfo
+from app.record_state import ACTIVE
 
 
 async def get_rule_or_404(
@@ -34,7 +35,11 @@ async def get_task_or_404_for_dep(
     db: AsyncSession, task_id: str, user_id: str
 ) -> Task:
     """Get a task by ID for dependency creation."""
-    stmt = select(Task).where(Task.id == task_id, Task.user_id == user_id)
+    stmt = select(Task).where(
+        Task.id == task_id,
+        Task.user_id == user_id,
+        Task.record_state == ACTIVE,
+    )
     result = await db.execute(stmt)
     task = result.scalar_one_or_none()
     if not task:

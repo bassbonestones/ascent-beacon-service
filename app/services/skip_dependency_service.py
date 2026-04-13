@@ -30,6 +30,7 @@ from app.services.intraday_occurrence_anchors import (
     get_intraday_occurrence_specs,
     parse_intraday_rrule,
 )
+from app.record_state import ACTIVE
 
 
 @dataclass(frozen=True)
@@ -126,8 +127,12 @@ async def _task_eligible_for_hard_skip_cascade(
     completed or skipped ``TaskCompletion`` for the anchor calendar day (so reopen
     partial chains do not list still-finished downstream, e.g. C after only A,B reopen).
     """
+    raw_state = getattr(task, "record_state", None)
+    record_state = raw_state if isinstance(raw_state, str) else ACTIVE
     if not task.is_recurring:
-        return task.status == "pending"
+        return task.status == "pending" and record_state == ACTIVE
+    if record_state != ACTIVE:
+        return False
 
     anchor: datetime = scheduled_for if scheduled_for is not None else utc_now()
     if anchor.tzinfo is None:
@@ -390,6 +395,8 @@ async def get_transitive_hard_dependents_toposort(
     for tid in topo:
         t = by_id.get(tid)
         if t is None:
+            continue
+        if t.record_state != ACTIVE:
             continue
         if await _task_eligible_for_hard_skip_cascade(
             db, t, scheduled_for, local_date

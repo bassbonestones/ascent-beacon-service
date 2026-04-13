@@ -472,3 +472,33 @@ async def test_completions_nonexistent_task_returns_404(client: AsyncClient):
     response = await client.get(f"/tasks/{fake_id}/completions")
     
     assert response.status_code == 404
+
+
+# ---- migrated from tests/mocked/test_services_views_migrated.py ----
+
+"""Migrated task view tests split from mixed services file."""
+
+from datetime import datetime, timedelta, timezone
+
+import pytest
+from httpx import AsyncClient
+
+
+@pytest.mark.asyncio
+async def test_today_view_empty(client: AsyncClient):
+    response = await client.get("/tasks/view/today")
+    assert response.status_code == 200
+    assert "tasks" in response.json()
+
+
+@pytest.mark.asyncio
+async def test_range_view_invalid_dates(client: AsyncClient):
+    now = datetime.now(timezone.utc)
+    response = await client.post(
+        "/tasks/view/range",
+        json={
+            "start_date": now.isoformat(),
+            "end_date": (now - timedelta(days=7)).isoformat(),
+        },
+    )
+    assert response.status_code == 200

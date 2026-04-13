@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import DependencyRule, TaskCompletion
+from app.models import DependencyRule, Task, TaskCompletion
 from app.schemas.tasks import TaskDependencySummary
 from app.services.dependency_service import check_dependencies
 from app.services.intraday_downstream_slot_fill import (
@@ -19,6 +19,7 @@ from app.services.intraday_downstream_slot_fill import (
     first_pending_slot_index,
 )
 from app.services.intraday_occurrence_anchors import list_dependency_anchors_for_day
+from app.record_state import ACTIVE
 
 if TYPE_CHECKING:
     from app.models import Task
@@ -28,7 +29,9 @@ async def downstream_task_ids_with_rules(db: AsyncSession, user_id: str) -> set[
     """Task IDs that appear as downstream on at least one dependency rule."""
     stmt = (
         select(DependencyRule.downstream_task_id)
+        .join(Task, Task.id == DependencyRule.downstream_task_id)
         .where(DependencyRule.user_id == user_id)
+        .where(Task.record_state == ACTIVE)
         .distinct()
     )
     result = await db.execute(stmt)

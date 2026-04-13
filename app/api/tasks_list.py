@@ -14,7 +14,8 @@ from sqlalchemy.orm import selectinload
 
 from app.core.auth import CurrentUser
 from app.core.db import get_db
-from app.models import Task
+from app.models import Goal, Task
+from app.record_state import list_query_states
 from app.models.task_completion import TaskCompletion
 from app.schemas.tasks import TaskDependencySummary, TaskListResponse
 from app.api.helpers.task_helpers import task_to_response
@@ -56,6 +57,14 @@ async def list_tasks(
     client_timezone: str | None = Query(
         default=None,
         description="IANA timezone (e.g. America/New_York) for intraday dependency anchors; recommended with include_dependency_summary",
+    ),
+    include_paused: bool = Query(
+        default=False,
+        description="Include tasks with record_state=paused",
+    ),
+    include_archived: bool = Query(
+        default=False,
+        description="Include tasks with record_state=archived",
     ),
 ) -> TaskListResponse:
     """Get all tasks for the current user, with optional filters."""
@@ -114,10 +123,24 @@ async def list_tasks(
         )
     )
     
+    task_states = list_query_states(
+        include_paused=include_paused, include_archived=include_archived
+    )
+    goal_states = list_query_states(
+        include_paused=include_paused, include_archived=include_archived
+    )
     stmt = (
         select(Task)
         .options(selectinload(Task.goal))
-        .where(Task.user_id == user.id)
+        .outerjoin(Goal, Task.goal_id == Goal.id)
+        .where(
+            Task.user_id == user.id,
+            Task.record_state.in_(task_states),
+            or_(
+                Task.goal_id.is_(None),
+                Goal.record_state.in_(goal_states),
+            ),
+        )
         .order_by(Task.scheduled_at.asc().nullslast(), Task.created_at.desc())
     )
     
@@ -209,8 +232,16 @@ async def list_tasks(
                         # Match by scheduled_for (backward compat for old records without local_date)
                         and_(
                             TaskCompletion.local_date.is_(None),
+                            TaskCompletion.scheduled_for.isnot(None),
                             TaskCompletion.scheduled_for >= start_of_day,
                             TaskCompletion.scheduled_for < end_of_range,
+                        ),
+                        # Legacy: some rows only have completed_at (no local_date / scheduled_for)
+                        and_(
+                            TaskCompletion.local_date.is_(None),
+                            TaskCompletion.scheduled_for.is_(None),
+                            TaskCompletion.completed_at >= start_of_day,
+                            TaskCompletion.completed_at < end_of_range,
                         ),
                     ),
                 )

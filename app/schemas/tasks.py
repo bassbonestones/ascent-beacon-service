@@ -95,6 +95,10 @@ class TaskResponse(BaseModel):
     description: str | None = None
     duration_minutes: int = 0
     status: str  # pending | completed | skipped
+
+    # Phase 4j
+    record_state: str = "active"
+    unaligned_execution_acknowledged_at: datetime | None = None
     
     # Scheduling: scheduled_date for date-only, scheduled_at for date+time
     scheduled_date: str | None = None  # YYYY-MM-DD format, for date-only tasks

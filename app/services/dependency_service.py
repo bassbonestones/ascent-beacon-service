@@ -26,6 +26,7 @@ from app.schemas.dependency import (
     DependencyStatusResponse,
     TaskInfo,
 )
+from app.record_state import ACTIVE
 
 
 # Maximum chain depth for transitive resolution (prevents pathological DAGs)
@@ -223,6 +224,11 @@ async def check_dependencies(
     blockers: list[DependencyBlocker] = []
     
     for rule in rules:
+        if (
+            rule.upstream_task is None
+            or rule.upstream_task.record_state != ACTIVE
+        ):
+            continue
         statuses = (
             _HARD_INCLUDING_SKIPPED
             if rule.strength == "hard"
@@ -279,6 +285,11 @@ async def check_dependencies(
     
     dependents: list[DependencyDependent] = []
     for rule in dependent_rules:
+        if (
+            rule.downstream_task is None
+            or rule.downstream_task.record_state != ACTIVE
+        ):
+            continue
         downstream_info = TaskInfo(
             id=rule.downstream_task.id,
             title=rule.downstream_task.title,
