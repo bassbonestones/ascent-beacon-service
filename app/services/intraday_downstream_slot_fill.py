@@ -1,9 +1,14 @@
 """
 Intraday downstream slot fill order for dependency list badges.
 
-When a hard prerequisite is shared across same-calendar intraday slots, only the
-first *pending* slot should read as ready: later slots stay ``has_unmet_hard`` until
-earlier slots are completed (matches ``next_occurrence`` consumption semantics).
+When a hard ``next_occurrence`` / ``within_window`` prerequisite is shared across
+same-calendar intraday slots, only the first *pending* slot should read as ready:
+later slots stay ``has_unmet_hard`` until earlier slots are completed (upstream
+consumption semantics).
+
+Hard ``all_occurrences`` uses a period gate: once every prerequisite occurrence
+in the period is satisfied, every downstream slot in that period is independently
+ready, so this masking must **not** apply for all-occurrences-only hard rules.
 """
 from __future__ import annotations
 
@@ -79,6 +84,34 @@ async def downstream_has_hard_dependency(
             DependencyRule.downstream_task_id == downstream_task_id,
             DependencyRule.user_id == user_id,
             DependencyRule.strength == "hard",
+        )
+        .limit(1)
+    )
+    result = await db.execute(stmt)
+    return result.scalar_one_or_none() is not None
+
+
+async def downstream_has_sequential_slot_hard_dependency(
+    db: AsyncSession,
+    user_id: str,
+    downstream_task_id: str,
+) -> bool:
+    """
+    True when intraday first-pending-slot masking should run.
+
+    Masking matches upstream *consumption* across downstream slots (hard
+    ``next_occurrence`` / ``within_window``). Hard ``all_occurrences`` does not
+    consume prerequisite completions across downstream slots in the same period,
+    so tasks with only all-occurrences hard rules must not get later slots forced
+    to ``blocked`` in list summaries.
+    """
+    stmt = (
+        select(DependencyRule.id)
+        .where(
+            DependencyRule.downstream_task_id == downstream_task_id,
+            DependencyRule.user_id == user_id,
+            DependencyRule.strength == "hard",
+            DependencyRule.scope.in_(("next_occurrence", "within_window")),
         )
         .limit(1)
     )

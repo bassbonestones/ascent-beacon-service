@@ -496,3 +496,41 @@ async def test_max_slots_recurring_upstream_in_window(
     we = datetime(2026, 4, 10, 12, 0, 0, tzinfo=timezone.utc)
     slots = await _max_slots_in_window(db_session, rule, ws, we)
     assert slots >= 1
+
+
+class _TaskStub:
+    __slots__ = ("is_recurring", "recurrence_rule")
+
+    def __init__(self, is_recurring: bool, recurrence_rule: str | None) -> None:
+        self.is_recurring = is_recurring
+        self.recurrence_rule = recurrence_rule
+
+
+def test_estimate_downstream_occurrences_daily_once_vs_thrice() -> None:
+    """Skip-impact count matches intraday slots per calendar day for FREQ=DAILY."""
+    from app.services.skip_dependency_service import _estimate_downstream_occurrences
+
+    once = _TaskStub(True, "FREQ=DAILY")
+    assert _estimate_downstream_occurrences(once) == 1
+
+    thrice = _TaskStub(
+        True,
+        "FREQ=DAILY;X-INTRADAY=specific_times;X-TIMES=08:00,12:00,18:00",
+    )
+    assert _estimate_downstream_occurrences(thrice) == 3
+
+    anytime_three = _TaskStub(
+        True,
+        "FREQ=DAILY;X-INTRADAY=anytime;X-DAILYOCC=3",
+    )
+    assert _estimate_downstream_occurrences(anytime_three) == 3
+
+
+def test_estimate_downstream_occurrences_non_daily() -> None:
+    from app.services.skip_dependency_service import _estimate_downstream_occurrences
+
+    weekly = _TaskStub(True, "FREQ=WEEKLY;BYDAY=MO")
+    assert _estimate_downstream_occurrences(weekly) == 1
+
+    one_off = _TaskStub(False, None)
+    assert _estimate_downstream_occurrences(one_off) == 1

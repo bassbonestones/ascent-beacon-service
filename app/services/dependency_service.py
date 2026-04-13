@@ -387,6 +387,46 @@ async def _count_qualifying_completions(
         return 0
 
 
+async def _list_qualifying_completions_all_occurrences_period(
+    db: AsyncSession,
+    rule: DependencyRule,
+    completion_statuses: tuple[str, ...],
+    *,
+    downstream_scheduled_for: datetime | None = None,
+    downstream_local_date: str | None = None,
+) -> list[TaskCompletion]:
+    """
+    Upstream completions in the Rule B bucket for ``all_occurrences``.
+
+    Does **not** exclude rows already linked in ``dependency_resolutions``: period-gate
+    semantics require every downstream occurrence in the bucket to see the same
+    prerequisite completions once all prerequisite slots are satisfied.
+    """
+    completions_stmt = (
+        select(TaskCompletion)
+        .where(
+            TaskCompletion.task_id == rule.upstream_task_id,
+            TaskCompletion.status.in_(completion_statuses),
+        )
+        .order_by(
+            TaskCompletion.scheduled_for.desc().nulls_last(),
+            TaskCompletion.completed_at.desc(),
+        )
+    )
+    result = await db.execute(completions_stmt)
+    all_completions = list(result.scalars().all())
+    upstream = await _load_upstream_task(db, rule)
+    if upstream is not None:
+        anchor = downstream_scheduled_for or utc_now()
+        return filter_completions_next_occurrence_period(
+            upstream,
+            anchor,
+            all_completions,
+            downstream_local_date=downstream_local_date,
+        )
+    return all_completions
+
+
 async def _resolve_all_occurrences(
     db: AsyncSession,
     rule: DependencyRule,
@@ -396,41 +436,20 @@ async def _resolve_all_occurrences(
     downstream_local_date: str | None = None,
 ) -> int:
     """
-    Count completed upstream occurrences (not consumed for this rule) that qualify.
+    Count qualifying upstream completions in the Rule B period bucket.
 
-    Unconsumed completions are filtered by **Rule B** (same recurrence period bucket
-    as this downstream anchor) when the upstream task row exists — same as
-    ``next_occurrence``. Without this, ``all_occurrences`` would count any prior
-    unconsumed upstream (e.g. yesterday's gym) against today's downstream, which
-    breaks daily habit pairing when users pick **Always required first** in the app.
+    For ``all_occurrences`` (period gate), consumption on other downstream completions
+    does not reduce this count so every dependent occurrence in the period can
+    complete after the prerequisite period is fully satisfied.
     """
-    # Find all completions for upstream task
-    completions_stmt = (
-        select(TaskCompletion)
-        .where(
-            TaskCompletion.task_id == rule.upstream_task_id,
-            TaskCompletion.status.in_(completion_statuses),
-        )
+    qualifying = await _list_qualifying_completions_all_occurrences_period(
+        db,
+        rule,
+        completion_statuses,
+        downstream_scheduled_for=downstream_scheduled_for,
+        downstream_local_date=downstream_local_date,
     )
-    result = await db.execute(completions_stmt)
-    all_completions = list(result.scalars().all())
-
-    consumed_result = await db.execute(_select_consumed_upstream_completion_ids(rule.id))
-    consumed_ids = set(consumed_result.scalars().all())
-
-    unconsumed = [c for c in all_completions if c.id not in consumed_ids]
-
-    upstream = await _load_upstream_task(db, rule)
-    if upstream is not None:
-        anchor = downstream_scheduled_for or utc_now()
-        unconsumed = filter_completions_next_occurrence_period(
-            upstream,
-            anchor,
-            unconsumed,
-            downstream_local_date=downstream_local_date,
-        )
-
-    return len(unconsumed)
+    return len(qualifying)
 
 
 async def _resolve_next_occurrence(
@@ -560,19 +579,19 @@ async def record_resolutions(
     Returns:
         List of created DependencyResolution records
     """
-    # Re-open can delete downstream TaskCompletion rows without removing dependency_resolutions
-    # (e.g. SQLite without FK enforcement). Stale rows still hit the partial unique index on
-    # (dependency_rule_id, upstream_completion_id) and block re-inserting the same consumption.
-    for blocker in blockers:
-        for uid in upstream_completion_ids.get(blocker.rule_id, []):
-            await db.execute(
-                delete(DependencyResolution).where(
-                    and_(
-                        DependencyResolution.dependency_rule_id == blocker.rule_id,
-                        DependencyResolution.upstream_completion_id == uid,
-                    )
+    # Re-open / retry: remove prior rows for this downstream completion + rule only
+    # (same upstream may legitimately link to multiple downstream completions for
+    # ``all_occurrences`` period gate — unique index is per downstream).
+    rule_ids = {b.rule_id for b in blockers}
+    for rid in rule_ids:
+        await db.execute(
+            delete(DependencyResolution).where(
+                and_(
+                    DependencyResolution.dependency_rule_id == rid,
+                    DependencyResolution.downstream_completion_id == downstream_completion_id,
                 )
             )
+        )
 
     resolutions: list[DependencyResolution] = []
 
@@ -686,17 +705,13 @@ async def get_qualifying_upstream_ids(
     )
     upstream = await _load_upstream_task(db, rule)
     if rule.scope == "all_occurrences":
-        completions = await _get_unconsumed_completions(
-            db, rule, None, None, statuses
+        completions = await _list_qualifying_completions_all_occurrences_period(
+            db,
+            rule,
+            statuses,
+            downstream_scheduled_for=downstream_scheduled_for,
+            downstream_local_date=downstream_local_date,
         )
-        if upstream is not None:
-            anchor = downstream_scheduled_for or utc_now()
-            completions = filter_completions_next_occurrence_period(
-                upstream,
-                anchor,
-                completions,
-                downstream_local_date=downstream_local_date,
-            )
     elif rule.scope == "next_occurrence":
         completions = await _get_unconsumed_completions(
             db,

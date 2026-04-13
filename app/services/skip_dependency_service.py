@@ -26,6 +26,10 @@ from app.services.dependency_service import (
     resolve_rule_validity_window_minutes,
     within_window_anchor_end,
 )
+from app.services.intraday_occurrence_anchors import (
+    get_intraday_occurrence_specs,
+    parse_intraday_rrule,
+)
 
 
 @dataclass(frozen=True)
@@ -37,15 +41,21 @@ class SkipImpactResult:
 
 
 def _estimate_downstream_occurrences(task: Task) -> int:
-    """Rough occurrence count for UI (recurring downstream)."""
+    """
+    How many downstream *slots* may be in play for this skip (same calendar day).
+
+    For ``FREQ=DAILY`` tasks, uses the same intraday expansion as dependency
+    summaries (specific times, N× anytime, interval grid, etc.). Example: daily
+    thrice → 3. Non-daily recurrence is counted as 1 per recurrence instance.
+    """
     if not task.is_recurring:
         return 1
-    rule = (task.recurrence_rule or "").upper()
-    if "FREQ=DAILY" in rule:
-        return 7
-    if "FREQ=WEEKLY" in rule:
+    rr = task.recurrence_rule or ""
+    if "FREQ=DAILY" not in rr.upper():
         return 1
-    return 1
+    parsed = parse_intraday_rrule(rr)
+    specs = get_intraday_occurrence_specs(parsed)
+    return max(1, len(specs))
 
 
 async def _within_window_bounds(

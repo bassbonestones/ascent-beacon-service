@@ -15,7 +15,7 @@ from app.schemas.tasks import TaskDependencySummary
 from app.services.dependency_service import check_dependencies
 from app.services.intraday_downstream_slot_fill import (
     completions_for_task_local_date,
-    downstream_has_hard_dependency,
+    downstream_has_sequential_slot_hard_dependency,
     first_pending_slot_index,
 )
 from app.services.intraday_occurrence_anchors import list_dependency_anchors_for_day
@@ -115,7 +115,9 @@ async def build_task_dependency_summaries_for_day(
             db, user_id, task, local_date_str, scheduled_for
         )
 
-    if len(anchors) > 1 and await downstream_has_hard_dependency(db, user_id, task.id):
+    if len(anchors) > 1 and await downstream_has_sequential_slot_hard_dependency(
+        db, user_id, task.id
+    ):
         rows = await completions_for_task_local_date(db, task.id, local_date_str)
         fp = first_pending_slot_index(anchors, rows, client_timezone)
         if fp is not None:

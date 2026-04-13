@@ -91,7 +91,104 @@ class TestDependencyBlocking:
             headers=auth_headers,
         )
         assert cp.status_code == 409, cp.text
-    
+
+    async def test_all_occurrences_period_gate_allows_each_downstream_slot_same_day(
+        self, client: AsyncClient, auth_headers: dict[str, str]
+    ) -> None:
+        """2× daily A before 3× daily B: all A completions unlock every B slot same day."""
+        day = "2031-05-20"
+        rr_a = "FREQ=DAILY;X-INTRADAY=specific_times;X-TIMES=08:00,20:00"
+        rr_b = "FREQ=DAILY;X-INTRADAY=specific_times;X-TIMES=09:00,14:00,19:00"
+
+        a = await client.post(
+            "/tasks",
+            json={
+                "title": "A twice",
+                "scheduled_at": f"{day}T08:00:00+00:00",
+                "is_recurring": True,
+                "recurrence_rule": rr_a,
+                "scheduling_mode": "fixed",
+                "recurrence_behavior": "essential",
+            },
+            headers=auth_headers,
+        )
+        b = await client.post(
+            "/tasks",
+            json={
+                "title": "B thrice",
+                "scheduled_at": f"{day}T09:00:00+00:00",
+                "is_recurring": True,
+                "recurrence_rule": rr_b,
+                "scheduling_mode": "fixed",
+                "recurrence_behavior": "essential",
+            },
+            headers=auth_headers,
+        )
+        assert a.status_code == 201 and b.status_code == 201
+        aid, bid = a.json()["id"], b.json()["id"]
+
+        dep = await client.post(
+            "/dependencies",
+            json={
+                "upstream_task_id": aid,
+                "downstream_task_id": bid,
+                "strength": "hard",
+                "scope": "all_occurrences",
+                "required_occurrence_count": 2,
+            },
+            headers=auth_headers,
+        )
+        assert dep.status_code == 201
+
+        for tiso in (f"{day}T08:00:00+00:00", f"{day}T20:00:00+00:00"):
+            r = await client.post(
+                f"/tasks/{aid}/complete",
+                json={"scheduled_for": tiso, "local_date": day},
+                headers=auth_headers,
+            )
+            assert r.status_code == 200, r.text
+
+        r1 = await client.post(
+            f"/tasks/{bid}/complete",
+            json={
+                "scheduled_for": f"{day}T09:00:00+00:00",
+                "local_date": day,
+            },
+            headers=auth_headers,
+        )
+        assert r1.status_code == 200, r1.text
+
+        st = await client.get(
+            f"/tasks/{bid}/dependency-status",
+            params={
+                "scheduled_for": f"{day}T14:00:00+00:00",
+                "local_date": day,
+            },
+            headers=auth_headers,
+        )
+        assert st.status_code == 200
+        assert st.json()["has_unmet_hard"] is False
+
+        r2 = await client.post(
+            f"/tasks/{bid}/complete",
+            json={
+                "scheduled_for": f"{day}T14:00:00+00:00",
+                "local_date": day,
+            },
+            headers=auth_headers,
+        )
+        assert r2.status_code == 200, r2.text
+
+        r3 = await client.post(
+            f"/tasks/{bid}/complete",
+            json={
+                "scheduled_for": f"{day}T19:00:00+00:00",
+                "local_date": day,
+            },
+            headers=auth_headers,
+        )
+        assert r3.status_code == 200, r3.text
+
     async def test_complete_blocked_by_hard_dependency(
         self, client: AsyncClient, auth_headers: dict[str, str]
     ) -> None:
@@ -1265,6 +1362,74 @@ class TestTaskListDependencySummary:
         by1 = down1["dependency_summaries_by_local_date"][day]
         assert by1["1400"]["has_unmet_hard"] is True
         assert by1["1900"]["has_unmet_hard"] is True
+
+    async def test_list_tasks_dependency_summary_all_occurrences_all_slots_ready(
+        self, client: AsyncClient, auth_headers: dict[str, str]
+    ) -> None:
+        """Hard all_occurrences: after every upstream slot is done, every B slot shows ready."""
+        day = "2031-06-01"
+        rr_a = "FREQ=DAILY;X-INTRADAY=specific_times;X-TIMES=08:00,20:00"
+        rr_b = "FREQ=DAILY;X-INTRADAY=specific_times;X-TIMES=09:00,14:00,19:00"
+
+        a = await client.post(
+            "/tasks",
+            json={
+                "title": "A twice",
+                "scheduled_at": f"{day}T08:00:00+00:00",
+                "is_recurring": True,
+                "recurrence_rule": rr_a,
+                "scheduling_mode": "fixed",
+                "recurrence_behavior": "essential",
+            },
+            headers=auth_headers,
+        )
+        b = await client.post(
+            "/tasks",
+            json={
+                "title": "B thrice",
+                "scheduled_at": f"{day}T09:00:00+00:00",
+                "is_recurring": True,
+                "recurrence_rule": rr_b,
+                "scheduling_mode": "fixed",
+                "recurrence_behavior": "essential",
+            },
+            headers=auth_headers,
+        )
+        assert a.status_code == 201 and b.status_code == 201
+        aid, bid = a.json()["id"], b.json()["id"]
+
+        dep = await client.post(
+            "/dependencies",
+            json={
+                "upstream_task_id": aid,
+                "downstream_task_id": bid,
+                "strength": "hard",
+                "scope": "all_occurrences",
+                "required_occurrence_count": 2,
+            },
+            headers=auth_headers,
+        )
+        assert dep.status_code == 201
+
+        for tiso in (f"{day}T08:00:00+00:00", f"{day}T20:00:00+00:00"):
+            r = await client.post(
+                f"/tasks/{aid}/complete",
+                json={"scheduled_for": tiso, "local_date": day},
+                headers=auth_headers,
+            )
+            assert r.status_code == 200, r.text
+
+        list_resp = await client.get(
+            f"/tasks?client_today={day}&include_dependency_summary=true"
+            f"&status=pending&days_ahead=14&client_timezone=UTC",
+            headers=auth_headers,
+        )
+        assert list_resp.status_code == 200
+        down = next(t for t in list_resp.json()["tasks"] if t["id"] == bid)
+        by_day = down["dependency_summaries_by_local_date"][day]
+        assert set(by_day.keys()) == {"0900", "1400", "1900"}
+        for k in ("0900", "1400", "1900"):
+            assert by_day[k]["has_unmet_hard"] is False, k
 
     async def test_list_tasks_dependency_summary_eod_upstream_timed_downstream(
         self, client: AsyncClient, auth_headers: dict[str, str]
