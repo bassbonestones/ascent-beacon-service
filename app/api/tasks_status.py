@@ -3,7 +3,7 @@ Tasks Status API endpoints.
 
 Provides status change operations: complete, skip, and reopen tasks.
 """
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Annotated, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -45,6 +45,11 @@ from app.services.skip_dependency_service import (
     build_transitive_hard_dependent_preview_rows,
     evaluate_skip_hard_downstream_impact,
     get_transitive_hard_dependents_toposort,
+)
+from app.services.intraday_occurrence_anchors import list_dependency_anchors_for_day
+from app.services.intraday_downstream_slot_fill import (
+    completions_for_task_local_date,
+    unfilled_anchor_indices,
 )
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
@@ -581,22 +586,64 @@ async def complete_task_chain(
     )
     
     completed_tasks: list[TaskResponse] = []
-    
+
+    async def _add_recurring_prereq_completions(
+        prereq_task: Task,
+        needed: int,
+    ) -> None:
+        """Insert ``needed`` TaskCompletion rows (all_occurrences may require >1)."""
+        inserted = 0
+        fallback_scheduled = request.scheduled_for or utc_now()
+        if eff_local_date:
+            anchors = list_dependency_anchors_for_day(
+                prereq_task,
+                date.fromisoformat(eff_local_date),
+                None,
+            )
+            existing = await completions_for_task_local_date(
+                db, prereq_task.id, eff_local_date
+            )
+            for uidx in unfilled_anchor_indices(anchors, existing, None):
+                if inserted >= needed:
+                    break
+                _, anchor_dt = anchors[uidx]
+                db.add(
+                    TaskCompletion(
+                        task_id=prereq_task.id,
+                        status="completed",
+                        completed_at=utc_now(),
+                        scheduled_for=anchor_dt,
+                        local_date=eff_local_date,
+                    )
+                )
+                await db.flush()
+                inserted += 1
+        while inserted < needed:
+            db.add(
+                TaskCompletion(
+                    task_id=prereq_task.id,
+                    status="completed",
+                    completed_at=utc_now(),
+                    scheduled_for=fallback_scheduled,
+                    local_date=eff_local_date,
+                )
+            )
+            await db.flush()
+            inserted += 1
+
     # Complete each prerequisite in order
     for blocker_info in transitive:
         prereq_task = await get_task_or_404(db, blocker_info["task_id"], user.id)
-        
-        # Record completion for prerequisite
+        needed = max(
+            0,
+            int(blocker_info["required_count"]) - int(blocker_info["completed_count"]),
+        )
+        if needed <= 0:
+            continue
+
+        # Record completion(s) for prerequisite
         if prereq_task.is_recurring:
-            prereq_completion = TaskCompletion(
-                task_id=prereq_task.id,
-                status="completed",
-                completed_at=utc_now(),
-                scheduled_for=request.scheduled_for,
-                local_date=eff_local_date,
-            )
-            db.add(prereq_completion)
-            await db.flush()
+            await _add_recurring_prereq_completions(prereq_task, needed)
         else:
             if prereq_task.status == "pending":
                 prereq_task.status = "completed"
@@ -617,13 +664,13 @@ async def complete_task_chain(
                 await clear_sort_order_for_completed(db, prereq_task)
         
         await update_goal_progress(db, prereq_task.goal_id)
-        
-        # Build response
+
+        # One list entry per completion so clients can show counts (e.g. 2× same prereq)
         prereq_task = await get_task_or_404(db, prereq_task.id, user.id)
-        completed_tasks.append(
-            task_to_response(prereq_task, completed_for_today=prereq_task.is_recurring)
-        )
-    
+        resp = task_to_response(prereq_task, completed_for_today=prereq_task.is_recurring)
+        for _ in range(needed):
+            completed_tasks.append(resp)
+
     # Now complete the target task (dependencies should now be met)
     dep_status = await check_dependencies(
         db, task_id, user.id, request.scheduled_for, eff_local_date

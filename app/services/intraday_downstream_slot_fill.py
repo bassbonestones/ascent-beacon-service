@@ -182,3 +182,38 @@ def first_pending_slot_index(
         if not filled[i]:
             return i
     return None
+
+
+def unfilled_anchor_indices(
+    anchors: list[tuple[str, datetime]],
+    completions: list[TaskCompletion],
+    client_timezone: str | None,
+) -> list[int]:
+    """
+    Slot indices (0..n-1) that do not yet have a matching completion for this day.
+
+    Used by complete-chain to synthesize multiple upstream TaskCompletion rows for
+    ``all_occurrences`` rules with ``required_occurrence_count`` > 1.
+    """
+    n = len(anchors)
+    if n == 0:
+        return []
+    filled = [False] * n
+    same_time = _anchors_share_identical_scheduled_for(anchors)
+    if same_time:
+        for idx in range(min(len(completions), n)):
+            filled[idx] = True
+    else:
+        used: set[int] = set()
+        for c in completions:
+            cdt = c.scheduled_for or c.completed_at
+            if cdt is None:
+                continue
+            for i, (_, anchor_dt) in enumerate(anchors):
+                if i in used or filled[i]:
+                    continue
+                if _same_wall_minute(cdt, anchor_dt, client_timezone):
+                    used.add(i)
+                    filled[i] = True
+                    break
+    return [i for i in range(n) if not filled[i]]

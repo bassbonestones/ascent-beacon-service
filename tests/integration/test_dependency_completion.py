@@ -612,7 +612,75 @@ class TestCompleteChainEndpoint:
         # Then downstream
         assert completed[1]["id"] == downstream_id
         assert completed[1]["status"] == "completed"
-    
+
+    async def test_complete_chain_all_occurrences_inserts_all_upstream_completions(
+        self, client: AsyncClient, auth_headers: dict[str, str]
+    ) -> None:
+        """Always-required-first with count 2: chain completes both prerequisite slots."""
+        day = "2032-07-01"
+        rr = "FREQ=DAILY;X-INTRADAY=specific_times;X-TIMES=07:00,21:00"
+        upstream_resp = await client.post(
+            "/tasks",
+            json={
+                "title": "Water 2×",
+                "scheduled_at": f"{day}T07:00:00+00:00",
+                "is_recurring": True,
+                "recurrence_rule": rr,
+                "scheduling_mode": "fixed",
+                "recurrence_behavior": "essential",
+            },
+            headers=auth_headers,
+        )
+        assert upstream_resp.status_code == 201
+        upstream_id = upstream_resp.json()["id"]
+
+        downstream_resp = await client.post(
+            "/tasks",
+            json={"title": "Gym after 2 waters"},
+            headers=auth_headers,
+        )
+        assert downstream_resp.status_code == 201
+        downstream_id = downstream_resp.json()["id"]
+
+        dep_resp = await client.post(
+            "/dependencies",
+            json={
+                "upstream_task_id": upstream_id,
+                "downstream_task_id": downstream_id,
+                "strength": "hard",
+                "scope": "all_occurrences",
+                "required_occurrence_count": 2,
+            },
+            headers=auth_headers,
+        )
+        assert dep_resp.status_code == 201
+
+        chain_resp = await client.post(
+            f"/tasks/{downstream_id}/complete-chain",
+            json={
+                "scheduled_for": f"{day}T12:00:00+00:00",
+                "local_date": day,
+            },
+            headers=auth_headers,
+        )
+        assert chain_resp.status_code == 200, chain_resp.text
+        completed = chain_resp.json()
+        assert len(completed) == 3
+        assert completed[0]["id"] == upstream_id
+        assert completed[1]["id"] == upstream_id
+        assert completed[2]["id"] == downstream_id
+
+        st = await client.get(
+            f"/tasks/{downstream_id}/dependency-status",
+            params={
+                "scheduled_for": f"{day}T12:00:00+00:00",
+                "local_date": day,
+            },
+            headers=auth_headers,
+        )
+        assert st.status_code == 200
+        assert st.json()["has_unmet_hard"] is False
+
     async def test_complete_chain_already_met(
         self, client: AsyncClient, auth_headers: dict[str, str]
     ) -> None:
