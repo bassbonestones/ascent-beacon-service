@@ -498,6 +498,48 @@ async def test_list_tasks_include_paused_and_archived_states(client: AsyncClient
 
 
 @pytest.mark.asyncio
+async def test_list_tasks_task_record_state_archived_only(client: AsyncClient) -> None:
+    """task_record_state=archived returns only archived tasks."""
+    goal = await client.post("/goals", json={"title": "Arch browse goal"})
+    goal_id = goal.json()["id"]
+
+    active_task = await client.post(
+        "/tasks",
+        json={"goal_id": goal_id, "title": "Still active"},
+    )
+    active_id = active_task.json()["id"]
+
+    archive_goal = await client.post("/goals", json={"title": "To archive"})
+    ag_id = archive_goal.json()["id"]
+    archived_task = await client.post(
+        "/tasks",
+        json={"goal_id": ag_id, "title": "Will archive"},
+    )
+    archived_id = archived_task.json()["id"]
+    await client.post(
+        f"/goals/{ag_id}/archive",
+        json={
+            "tracking_mode": "failed",
+            "task_resolutions": [{"task_id": archived_id, "action": "archive_task"}],
+        },
+    )
+
+    bad = await client.get("/tasks", params={"task_record_state": "paused"})
+    assert bad.status_code == 400
+
+    only_archived = await client.get(
+        "/tasks",
+        params={"task_record_state": "archived", "client_today": "2026-04-13"},
+    )
+    assert only_archived.status_code == 200
+    ids = {t["id"] for t in only_archived.json()["tasks"]}
+    assert archived_id in ids
+    assert active_id not in ids
+    for t in only_archived.json()["tasks"]:
+        assert t["record_state"] == "archived"
+
+
+@pytest.mark.asyncio
 async def test_list_tasks_handles_legacy_completion_rows(
     client: AsyncClient,
     db_session: AsyncSession,

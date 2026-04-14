@@ -7,7 +7,7 @@ Split from tasks_crud.py due to complexity of completion tracking logic.
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -15,7 +15,7 @@ from sqlalchemy.orm import selectinload
 from app.core.auth import CurrentUser
 from app.core.db import get_db
 from app.models import Goal, Task
-from app.record_state import list_query_states
+from app.record_state import ARCHIVED, list_query_states
 from app.models.task_completion import TaskCompletion
 from app.schemas.tasks import TaskDependencySummary, TaskListResponse
 from app.api.helpers.task_helpers import task_to_response
@@ -66,8 +66,18 @@ async def list_tasks(
         default=False,
         description="Include tasks with record_state=archived",
     ),
+    task_record_state: str | None = Query(
+        default=None,
+        description="When set to 'archived', return only archived tasks (browse mode)",
+    ),
 ) -> TaskListResponse:
     """Get all tasks for the current user, with optional filters."""
+    if task_record_state is not None and task_record_state != "archived":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="task_record_state must be 'archived' when provided",
+        )
+
     # Determine "today" - prefer client's local date if provided
     # This fixes timezone issues where UTC "today" differs from user's local "today"
     if client_today:
@@ -123,12 +133,19 @@ async def list_tasks(
         )
     )
     
-    task_states = list_query_states(
-        include_paused=include_paused, include_archived=include_archived
-    )
-    goal_states = list_query_states(
-        include_paused=include_paused, include_archived=include_archived
-    )
+    if task_record_state == "archived":
+        task_states = [ARCHIVED]
+        # Archived tasks may belong to active, paused, or archived goals
+        goal_states = list_query_states(
+            include_paused=True, include_archived=True
+        )
+    else:
+        task_states = list_query_states(
+            include_paused=include_paused, include_archived=include_archived
+        )
+        goal_states = list_query_states(
+            include_paused=include_paused, include_archived=include_archived
+        )
     stmt = (
         select(Task)
         .options(selectinload(Task.goal))

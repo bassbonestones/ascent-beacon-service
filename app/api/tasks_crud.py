@@ -233,7 +233,7 @@ async def delete_task(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> None:
     """Delete a task (soft if dependency graph blocks hard delete)."""
-    task = await get_active_task_or_404(db, task_id, user.id)
+    task = await get_task_or_404(db, task_id, user.id)
     goal_id = task.goal_id
 
     if task.goal_id is not None or await task_has_dependency_edges(db, task.id):
