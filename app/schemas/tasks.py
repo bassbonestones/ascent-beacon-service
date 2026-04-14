@@ -38,6 +38,7 @@ class GoalInfo(BaseModel):
     id: str
     title: str
     status: str
+    record_state: str = "active"
 
     model_config = ConfigDict(from_attributes=True)
 

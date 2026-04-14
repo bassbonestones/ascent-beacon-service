@@ -238,3 +238,41 @@ async def test_delete_unlinked_task_hard_deletes_row(client: AsyncClient) -> Non
 
     get_response = await client.get(f"/tasks/{task_id}")
     assert get_response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_archive_active_task_then_conflict_on_repeat(
+    client: AsyncClient,
+) -> None:
+    goal_id = await _create_goal(client)
+    create_response = await client.post(
+        "/tasks",
+        json={"goal_id": goal_id, "title": "Archive me"},
+    )
+    assert create_response.status_code == 201
+    task_id = create_response.json()["id"]
+
+    archived = await client.post(f"/tasks/{task_id}/archive", json={})
+    assert archived.status_code == 200
+    assert archived.json()["record_state"] == "archived"
+
+    again = await client.post(f"/tasks/{task_id}/archive", json={})
+    assert again.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_archive_paused_task(client: AsyncClient) -> None:
+    goal_id = await _create_goal(client)
+    create_response = await client.post(
+        "/tasks",
+        json={"goal_id": goal_id, "title": "Pause then archive"},
+    )
+    assert create_response.status_code == 201
+    task_id = create_response.json()["id"]
+
+    pause = await client.post(f"/tasks/{task_id}/pause", json={})
+    assert pause.status_code == 200
+
+    archived = await client.post(f"/tasks/{task_id}/archive", json={})
+    assert archived.status_code == 200
+    assert archived.json()["record_state"] == "archived"

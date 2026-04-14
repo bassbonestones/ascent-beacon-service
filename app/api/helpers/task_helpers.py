@@ -138,6 +138,8 @@ def task_to_response(
             id=task.goal.id,
             title=task.goal.title,
             status=task.goal.status,
+            record_state=_task_str_field(task.goal, "record_state", "active")
+            or "active",
         )
     
     return TaskResponse(

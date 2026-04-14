@@ -334,6 +334,31 @@ async def test_create_value_revision_includes_insight_when_similarity_returns_on
 
 
 @pytest.mark.asyncio
+async def test_create_value_revision_works_when_active_revision_missing(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Cover branch where value has no active revision before creating a revision."""
+    create_response = await client.post(
+        "/values",
+        json={"statement": "Detached active", "weight_raw": 50, "origin": "declared"},
+    )
+    value_id = create_response.json()["id"]
+
+    value = await db_session.get(Value, value_id)
+    assert value is not None
+    value.active_revision_id = None
+    await db_session.commit()
+
+    response = await client.post(
+        f"/values/{value_id}/revisions",
+        json={"statement": "Now revised", "weight_raw": 55, "origin": "refined"},
+    )
+    assert response.status_code == 200
+    assert response.json()["active_revision_id"] is not None
+
+
+@pytest.mark.asyncio
 async def test_value_origin_types(client: AsyncClient):
     """Test creating values with different origin types."""
     origins = ["declared", "discovered", "refined", "ai_suggested"]

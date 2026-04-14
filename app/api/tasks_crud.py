@@ -28,7 +28,7 @@ from app.api.helpers.task_helpers import (
     update_goal_progress,
     assign_sort_order_for_anytime,
 )
-from app.record_state import ACTIVE, DELETED, PAUSED
+from app.record_state import ACTIVE, ARCHIVED, DELETED, PAUSED
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
@@ -260,6 +260,39 @@ async def pause_task(
     task = await get_active_task_or_404(db, task_id, user.id)
     task.record_state = PAUSED
     task.updated_at = utc_now()
+    await db.commit()
+    task = await get_task_or_404(db, task.id, user.id)
+    return task_to_response(task)
+
+
+@router.post(
+    "/{task_id}/archive",
+    response_model=TaskResponse,
+    summary="Archive task",
+)
+async def archive_task(
+    task_id: str,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> TaskResponse:
+    """Set task record_state to archived (terminal; keeps history for tracking)."""
+    task = await get_task_or_404(db, task_id, user.id)
+    goal_id = task.goal_id
+    raw_rs = getattr(task, "record_state", None) or "active"
+    state = raw_rs.lower() if isinstance(raw_rs, str) else "active"
+    if state == ARCHIVED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Task is already archived",
+        )
+    if state not in (ACTIVE, PAUSED):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cannot archive task in this state",
+        )
+    task.record_state = ARCHIVED
+    task.updated_at = utc_now()
+    await update_goal_progress(db, goal_id)
     await db.commit()
     task = await get_task_or_404(db, task.id, user.id)
     return task_to_response(task)
