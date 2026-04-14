@@ -193,7 +193,7 @@ async def get_reschedule_count(db: AsyncSession, user_id: str) -> int:
             Goal.user_id == user_id,
             Goal.record_state == ACTIVE,
             Goal.target_date < date.today(),
-            Goal.status.notin_(["completed", "abandoned"]),
+            Goal.status != "completed",
         )
     )
     return len(result.scalars().all())
@@ -231,7 +231,7 @@ async def delete_priority_link(
     await db.delete(link)
 
 
-VALID_GOAL_STATUSES = ["not_started", "in_progress", "completed", "abandoned"]
+VALID_GOAL_STATUSES = ["not_started", "in_progress", "completed"]
 
 
 def validate_goal_status(status_value: str) -> None:
@@ -334,7 +334,7 @@ async def list_goals_query(
     )
 
     if not include_completed:
-        query = query.where(Goal.status.notin_(["completed", "abandoned"]))
+        query = query.where(Goal.status != "completed")
 
     if status_filter:
         query = query.where(Goal.status == status_filter)
@@ -346,7 +346,7 @@ async def list_goals_query(
         today = date.today()
         query = query.where(
             Goal.target_date < today,
-            Goal.status.notin_(["completed", "abandoned"]),
+            Goal.status != "completed",
         )
 
     if priority_id:

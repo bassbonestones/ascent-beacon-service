@@ -8,6 +8,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.api.helpers.goal_status_derivation import recompute_goal_status_ancestors
 from app.models import Task, Goal
 from app.models.dependency import DependencyRule
 from app.record_state import ACTIVE, DELETED
@@ -214,8 +215,9 @@ async def update_goal_progress(db: AsyncSession, goal_id: str | None) -> None:
             goal.progress_cached = 0
             goal.total_time_minutes = 0
             goal.completed_time_minutes = 0
+        await recompute_goal_status_ancestors(db, goal_id)
         return
-    
+
     # Calculate totals
     total_time = sum(t.duration_minutes for t in tasks)
     completed_time = sum(
@@ -240,10 +242,8 @@ async def update_goal_progress(db: AsyncSession, goal_id: str | None) -> None:
         goal.total_time_minutes = total_time
         goal.completed_time_minutes = completed_time
         goal.has_incomplete_breakdown = False  # Goal has tasks
-        
-        # Auto-transition to in_progress when first task is completed
-        if goal.status == "not_started" and any(t.status == "completed" for t in tasks):
-            goal.status = "in_progress"
+
+    await recompute_goal_status_ancestors(db, goal_id)
 
 
 # ============================================================================

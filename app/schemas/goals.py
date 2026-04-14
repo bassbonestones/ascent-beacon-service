@@ -4,7 +4,7 @@ Pydantic schemas for Goals API.
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 # ============================================================================
@@ -46,7 +46,7 @@ class GoalResponse(BaseModel):
     title: str
     description: str | None = None
     target_date: date | None = None
-    status: str  # not_started | in_progress | completed | abandoned
+    status: str  # not_started | in_progress | completed (derived)
     progress_cached: int = 0
     total_time_minutes: int = 0
     completed_time_minutes: int = 0
@@ -100,17 +100,23 @@ class CreateGoalRequest(BaseModel):
 class UpdateGoalRequest(BaseModel):
     """Request to update an existing goal."""
 
+    model_config = ConfigDict(extra="ignore")
+
     title: str | None = Field(default=None, min_length=1, max_length=500)
     description: str | None = Field(default=None, max_length=2000)
     target_date: date | None = None
-    status: str | None = None  # not_started | in_progress | completed | abandoned
     parent_goal_id: str | None = None  # Reparent goal
+    priority_id: str | None = Field(
+        default=None,
+        description="When set (including null), replaces all priority links for this goal.",
+    )
 
-
-class UpdateGoalStatusRequest(BaseModel):
-    """Request to update goal status only."""
-
-    status: str = Field(..., pattern="^(not_started|in_progress|completed|abandoned)$")
+    @model_validator(mode="before")
+    @classmethod
+    def reject_status_in_payload(cls, data: object) -> object:
+        if isinstance(data, dict) and "status" in data:
+            raise ValueError("Goal status is derived and cannot be set via the API")
+        return data
 
 
 class SetPriorityLinksRequest(BaseModel):

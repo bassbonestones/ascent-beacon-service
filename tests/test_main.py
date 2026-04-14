@@ -2537,19 +2537,37 @@ async def test_goal_get_children(client: AsyncClient):
 
 @pytest.mark.asyncio
 async def test_goal_status_transitions(client: AsyncClient):
-    """Test valid status transitions."""
+    """Goal status is derived from task completion."""
     goal = await client.post("/goals", json={"title": "Status Test Goal"})
     goal_id = goal.json()["id"]
-
-    # Not started -> In progress
-    resp1 = await client.patch(f"/goals/{goal_id}", json={"status": "in_progress"})
-    assert resp1.status_code == 200
-    assert resp1.json()["status"] == "in_progress"
-
-    # In progress -> Completed
-    resp2 = await client.patch(f"/goals/{goal_id}", json={"status": "completed"})
-    assert resp2.status_code == 200
-    assert resp2.json()["status"] == "completed"
+    scheduled_at = datetime.now(timezone.utc).isoformat()
+    t1 = await client.post(
+        "/tasks",
+        json={
+            "goal_id": goal_id,
+            "title": "A",
+            "duration_minutes": 30,
+            "scheduled_at": scheduled_at,
+        },
+    )
+    assert t1.status_code == 201
+    t2 = await client.post(
+        "/tasks",
+        json={
+            "goal_id": goal_id,
+            "title": "B",
+            "duration_minutes": 30,
+            "scheduled_at": scheduled_at,
+        },
+    )
+    assert t2.status_code == 201
+    await client.post(f"/tasks/{t1.json()['id']}/complete", json={})
+    mid = await client.get(f"/goals/{goal_id}")
+    assert mid.status_code == 200
+    assert mid.json()["status"] == "in_progress"
+    await client.post(f"/tasks/{t2.json()['id']}/complete", json={})
+    done = await client.get(f"/goals/{goal_id}")
+    assert done.json()["status"] == "completed"
 
 
 @pytest.mark.asyncio
@@ -3588,19 +3606,36 @@ async def test_goal_get_children__legacyentity_flows(client: AsyncClient):
 
 @pytest.mark.asyncio
 async def test_goal_status_transitions__legacyentity_flows(client: AsyncClient):
-    """Test valid status transitions."""
+    """Goal status is derived from task completion."""
     goal = await client.post("/goals", json={"title": "Status Test Goal"})
     goal_id = goal.json()["id"]
-
-    # Not started -> In progress
-    resp1 = await client.patch(f"/goals/{goal_id}", json={"status": "in_progress"})
-    assert resp1.status_code == 200
-    assert resp1.json()["status"] == "in_progress"
-
-    # In progress -> Completed
-    resp2 = await client.patch(f"/goals/{goal_id}", json={"status": "completed"})
-    assert resp2.status_code == 200
-    assert resp2.json()["status"] == "completed"
+    scheduled_at = datetime.now(timezone.utc).isoformat()
+    t1 = await client.post(
+        "/tasks",
+        json={
+            "goal_id": goal_id,
+            "title": "A",
+            "duration_minutes": 30,
+            "scheduled_at": scheduled_at,
+        },
+    )
+    assert t1.status_code == 201
+    t2 = await client.post(
+        "/tasks",
+        json={
+            "goal_id": goal_id,
+            "title": "B",
+            "duration_minutes": 30,
+            "scheduled_at": scheduled_at,
+        },
+    )
+    assert t2.status_code == 201
+    await client.post(f"/tasks/{t1.json()['id']}/complete", json={})
+    mid = await client.get(f"/goals/{goal_id}")
+    assert mid.json()["status"] == "in_progress"
+    await client.post(f"/tasks/{t2.json()['id']}/complete", json={})
+    done = await client.get(f"/goals/{goal_id}")
+    assert done.json()["status"] == "completed"
 
 
 @pytest.mark.asyncio
@@ -5252,27 +5287,34 @@ class TestGoalsEdgeCases:
 
     @pytest.mark.asyncio
     async def test_goal_status_update(self, client: AsyncClient):
-        """Branch: update goal status."""
+        """Branch: /goals/{id}/status removed."""
         goal = await client.post("/goals", json={"title": "Status Goal"})
         goal_id = goal.json()["id"]
-        
+
         response = await client.patch(
             f"/goals/{goal_id}/status",
             json={"status": "in_progress"},
         )
-        assert response.status_code == 200
-        assert response.json()["status"] == "in_progress"
+        assert response.status_code == 404
 
     @pytest.mark.asyncio
     async def test_goal_complete_status(self, client: AsyncClient):
-        """Branch: complete goal status."""
+        """Branch: goal completes when tasks complete."""
         goal = await client.post("/goals", json={"title": "Complete Goal"})
         goal_id = goal.json()["id"]
-        
-        response = await client.patch(
-            f"/goals/{goal_id}/status",
-            json={"status": "completed"},
+        scheduled_at = datetime.now(timezone.utc).isoformat()
+        t = await client.post(
+            "/tasks",
+            json={
+                "goal_id": goal_id,
+                "title": "One",
+                "duration_minutes": 30,
+                "scheduled_at": scheduled_at,
+            },
         )
+        assert t.status_code == 201
+        await client.post(f"/tasks/{t.json()['id']}/complete", json={})
+        response = await client.get(f"/goals/{goal_id}")
         assert response.status_code == 200
         assert response.json()["status"] == "completed"
 

@@ -84,6 +84,7 @@ async def test_list_tasks_parses_sparse_completion_rows_and_dependency_summary(
         client_timezone=None,
         include_paused=False,
         include_archived=False,
+        task_record_state=None,
     )
 
     assert response["total"] == 1
@@ -144,6 +145,7 @@ async def test_list_tasks_parses_aware_timestamps_and_reuses_existing_maps(
         client_timezone=None,
         include_paused=False,
         include_archived=False,
+        task_record_state=None,
     )
 
     assert response["total"] == 1

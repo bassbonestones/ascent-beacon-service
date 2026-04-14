@@ -43,7 +43,7 @@ class Goal(Base, UUIDMixin, TimestampMixin):
     description: Mapped[str | None] = mapped_column(String, nullable=True)
     target_date: Mapped[date | None] = mapped_column(Date, nullable=True)
 
-    # Status: not_started | in_progress | completed | abandoned
+    # Status: not_started | in_progress | completed (derived from task tree)
     status: Mapped[str] = mapped_column(String, nullable=False, default="not_started")
 
     # Progress cached for performance (recalculated when tasks change)

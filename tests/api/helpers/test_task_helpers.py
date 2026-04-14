@@ -509,7 +509,7 @@ class TestMoreGoalHelpers:
 
     def test_goal_status_values(self):
         """Valid goal status values."""
-        valid_statuses = ["not_started", "in_progress", "completed", "abandoned"]
+        valid_statuses = ["not_started", "in_progress", "completed"]
 
         for status in valid_statuses:
             assert status in valid_statuses

@@ -502,6 +502,14 @@ class TestTaskToResponse:
 class TestGoalProgressHelper:
     """Unit tests for goal progress calculation."""
 
+    @pytest.fixture(autouse=True)
+    def _patch_recompute_goal_status(self):
+        with patch(
+            "app.api.helpers.task_helpers.recompute_goal_status_ancestors",
+            new_callable=AsyncMock,
+        ):
+            yield
+
     @pytest.mark.asyncio
     async def test_update_goal_progress_returns_early_if_no_goal_id(self):
         """update_goal_progress does nothing with goal_id=None."""
@@ -578,8 +586,6 @@ class TestGoalProgressHelper:
         assert mock_goal.progress_cached == 60
         assert mock_goal.total_time_minutes == 100
         assert mock_goal.completed_time_minutes == 60
-        # Auto-transition from not_started to in_progress
-        assert mock_goal.status == "in_progress"
 
     @pytest.mark.asyncio
     async def test_update_goal_progress_with_lightning_tasks_only(self):
@@ -2462,6 +2468,14 @@ class TestGoalHelpersMocked:
 class TestGoalProgressHelperMocked:
     """Async mocked tests for goal progress updating."""
 
+    @pytest.fixture(autouse=True)
+    def _patch_recompute_goal_status(self):
+        with patch(
+            "app.api.helpers.task_helpers.recompute_goal_status_ancestors",
+            new_callable=AsyncMock,
+        ):
+            yield
+
     @pytest.mark.asyncio
     async def test_update_goal_progress_no_tasks(self):
         """update_goal_progress handles no tasks case."""
@@ -2518,7 +2532,6 @@ class TestGoalProgressHelperMocked:
         
         # Goal should have 50% progress
         assert mock_goal.progress_cached == 50
-        assert mock_goal.status == "in_progress"  # Transitioned from not_started
 
     @pytest.mark.asyncio
     async def test_update_goal_progress_nil_goal_id(self):
@@ -5329,6 +5342,14 @@ class TestDependencyResolutionLogic:
 
 class TestUpdateGoalProgressBranches:
     """Tests for update_goal_progress edge cases and branches."""
+
+    @pytest.fixture(autouse=True)
+    def _patch_recompute_goal_status(self):
+        with patch(
+            "app.api.helpers.task_helpers.recompute_goal_status_ancestors",
+            new_callable=AsyncMock,
+        ):
+            yield
 
     @pytest.mark.asyncio
     async def test_update_goal_progress_goal_not_found(self):

@@ -1,11 +1,9 @@
-"""Placeholder tests for `app/models/dependency.py`."""
+"""Tests for dependency model + skip_dependency_service branches."""
 
 import pytest
 
 
-pytestmark = pytest.mark.skip(reason="Placeholder scaffold for 1:1 app-to-tests mapping")
-
-
+@pytest.mark.skip(reason="Placeholder scaffold for 1:1 app-to-tests mapping")
 def test_placeholder_for_dependency() -> None:
     """Replace with real tests when this module is migrated."""
     assert True

@@ -24,7 +24,6 @@ from app.schemas.goals import (
     RescheduleGoalsRequest,
     SetPriorityLinksRequest,
     UpdateGoalRequest,
-    UpdateGoalStatusRequest,
 )
 from app.api.helpers.goal_helpers import (
     get_active_goal_or_404,
@@ -35,13 +34,12 @@ from app.api.helpers.goal_helpers import (
     get_reschedule_count,
     check_priority_link_exists,
     delete_priority_link,
-    validate_goal_status,
     build_goal_tree,
     list_goals_query,
-    apply_goal_status,
     validate_parent_goal,
     reschedule_goals_bulk,
 )
+from app.api.helpers.goal_status_derivation import recompute_goal_status_ancestors
 from app.api.helpers.goal_archive_helpers import (
     affected_tasks_for_archive,
     apply_task_resolution,
@@ -88,6 +86,9 @@ async def create_goal(
     if request.priority_ids:
         await create_priority_links(db, goal.id, user.id, request.priority_ids)
 
+    await db.commit()
+    goal = await reload_goal_with_eager_loading(db, goal.id)
+    await recompute_goal_status_ancestors(db, goal.id)
     await db.commit()
     goal = await reload_goal_with_eager_loading(db, goal.id)
     return goal_to_response(goal)
@@ -271,6 +272,8 @@ async def unpause_goal(
         )
     goal.record_state = ACTIVE
     goal.updated_at = utc_now()
+    await db.flush()
+    await recompute_goal_status_ancestors(db, goal_id)
     await db.commit()
     reloaded = await reload_goal_with_eager_loading(db, goal_id)
     return goal_to_response(reloaded)
@@ -311,6 +314,7 @@ async def update_goal(
 ) -> GoalResponse:
     """Update a goal's fields."""
     goal = await get_active_goal_or_404(db, goal_id, user.id)
+    old_parent_id = goal.parent_goal_id
 
     if request.parent_goal_id is not None:
         await validate_parent_goal(db, goal_id, request.parent_goal_id, user.id)
@@ -322,31 +326,21 @@ async def update_goal(
         goal.description = request.description
     if request.target_date is not None:
         goal.target_date = request.target_date
-    if request.status is not None:
-        validate_goal_status(request.status)
-        apply_goal_status(goal, request.status, utc_now())
+
+    raw_update = request.model_dump(exclude_unset=True)
+    if "priority_id" in raw_update:
+        for link in list(goal.priority_links):
+            await db.delete(link)
+        await db.flush()
+        new_pid = raw_update["priority_id"]
+        if new_pid is not None:
+            await create_priority_links(db, goal.id, user.id, [new_pid])
 
     goal.updated_at = utc_now()
-    await db.commit()
-    goal = await reload_goal_with_eager_loading(db, goal.id)
-    return goal_to_response(goal)
-
-
-@router.patch(
-    "/{goal_id}/status",
-    response_model=GoalResponse,
-    summary="Update goal status",
-)
-async def update_goal_status(
-    goal_id: str,
-    request: UpdateGoalStatusRequest,
-    user: CurrentUser,
-    db: Annotated[AsyncSession, Depends(get_db)],
-) -> GoalResponse:
-    """Quick endpoint to update just the goal status."""
-    goal = await get_active_goal_or_404(db, goal_id, user.id)
-    apply_goal_status(goal, request.status, utc_now())
-    goal.updated_at = utc_now()
+    await db.flush()
+    await recompute_goal_status_ancestors(db, goal.id)
+    if old_parent_id != goal.parent_goal_id and old_parent_id is not None:
+        await recompute_goal_status_ancestors(db, old_parent_id)
     await db.commit()
     goal = await reload_goal_with_eager_loading(db, goal.id)
     return goal_to_response(goal)
@@ -364,6 +358,7 @@ async def delete_goal(
 ) -> None:
     """Delete goal with soft/hard lifecycle rules."""
     goal = await get_goal_or_404(db, goal_id, user.id)
+    parent_for_recompute = goal.parent_goal_id
     # Child goals are soft-deleted while parent structure still exists.
     # Root goals are hard-deleted (cascade) to physically purge no-longer-needed subtree data.
     if goal.parent_goal_id:
@@ -386,6 +381,8 @@ async def delete_goal(
                 task.updated_at = now
     else:
         await db.delete(goal)
+    if parent_for_recompute:
+        await recompute_goal_status_ancestors(db, parent_for_recompute)
     await db.commit()
 
 

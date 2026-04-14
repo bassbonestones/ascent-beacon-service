@@ -1,10 +1,32 @@
 """Tests for goals API endpoints."""
 
 import pytest
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from httpx import AsyncClient
 
 from app.models.user import User
+
+
+async def _create_one_time_task(
+    client: AsyncClient, goal_id: str, *, title: str = "Work unit"
+) -> str:
+    scheduled_at = datetime.now(timezone.utc).isoformat()
+    r = await client.post(
+        "/tasks",
+        json={
+            "goal_id": goal_id,
+            "title": title,
+            "duration_minutes": 30,
+            "scheduled_at": scheduled_at,
+        },
+    )
+    assert r.status_code == 201, r.text
+    return r.json()["id"]
+
+
+async def _complete_task(client: AsyncClient, task_id: str) -> None:
+    r = await client.post(f"/tasks/{task_id}/complete", json={})
+    assert r.status_code == 200
 
 
 @pytest.mark.asyncio
@@ -112,7 +134,8 @@ async def test_list_goals_excludes_completed(client: AsyncClient):
     # Create a goal and mark it complete
     create_response = await client.post("/goals", json={"title": "Done Goal"})
     goal_id = create_response.json()["id"]
-    await client.patch(f"/goals/{goal_id}/status", json={"status": "completed"})
+    t = await _create_one_time_task(client, goal_id)
+    await _complete_task(client, t)
 
     # Create another active goal
     await client.post("/goals", json={"title": "Active Goal"})
@@ -131,7 +154,8 @@ async def test_list_goals_include_completed(client: AsyncClient):
     # Create and complete a goal
     create_response = await client.post("/goals", json={"title": "Done Goal"})
     goal_id = create_response.json()["id"]
-    await client.patch(f"/goals/{goal_id}/status", json={"status": "completed"})
+    t = await _create_one_time_task(client, goal_id)
+    await _complete_task(client, t)
 
     # List with include_completed
     response = await client.get("/goals?include_completed=true")
@@ -277,56 +301,53 @@ async def test_update_goal(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_update_goal_status(client: AsyncClient):
-    """Test updating just the goal status."""
+async def test_goal_derives_in_progress_when_one_of_two_tasks_done(
+    client: AsyncClient,
+):
+    """Derived status becomes in_progress when some but not all tasks are done."""
     create_response = await client.post("/goals", json={"title": "My Goal"})
     goal_id = create_response.json()["id"]
+    t1 = await _create_one_time_task(client, goal_id, title="A")
+    await _create_one_time_task(client, goal_id, title="B")
+    await _complete_task(client, t1)
 
-    response = await client.patch(
-        f"/goals/{goal_id}/status",
-        json={"status": "in_progress"},
-    )
-
-    assert response.status_code == 200
-    assert response.json()["status"] == "in_progress"
+    g = await client.get(f"/goals/{goal_id}")
+    assert g.status_code == 200
+    assert g.json()["status"] == "in_progress"
 
 
 @pytest.mark.asyncio
 async def test_complete_goal_sets_completed_at(client: AsyncClient):
-    """Test that completing a goal sets completed_at timestamp."""
+    """Completing all tasks sets goal completed and completed_at."""
     create_response = await client.post("/goals", json={"title": "My Goal"})
     goal_id = create_response.json()["id"]
+    t = await _create_one_time_task(client, goal_id)
+    await _complete_task(client, t)
 
-    response = await client.patch(
-        f"/goals/{goal_id}/status",
-        json={"status": "completed"},
-    )
-
+    response = await client.get(f"/goals/{goal_id}")
     assert response.status_code == 200
+    assert response.json()["status"] == "completed"
     assert isinstance(response.json()["completed_at"], str)
 
 
 @pytest.mark.asyncio
 async def test_uncomplete_goal_clears_completed_at(client: AsyncClient):
-    """Test that uncompleting a goal clears completed_at timestamp."""
+    """Reopening the last completed task clears goal completed_at."""
     create_response = await client.post("/goals", json={"title": "My Goal"})
     goal_id = create_response.json()["id"]
+    t = await _create_one_time_task(client, goal_id)
+    await _complete_task(client, t)
+    r = await client.post(f"/tasks/{t}/reopen", json={})
+    assert r.status_code == 200
 
-    # Complete
-    await client.patch(f"/goals/{goal_id}/status", json={"status": "completed"})
-
-    # Uncomplete
-    response = await client.patch(
-        f"/goals/{goal_id}/status",
-        json={"status": "in_progress"},
-    )
-
+    response = await client.get(f"/goals/{goal_id}")
+    assert response.json()["status"] != "completed"
     assert response.json()["completed_at"] is None
 
 
 @pytest.mark.asyncio
 async def test_update_goal_invalid_status(client: AsyncClient):
-    """Test that invalid status is rejected."""
+    """Test that status cannot be set via PATCH (forbidden field)."""
     create_response = await client.post("/goals", json={"title": "My Goal"})
     goal_id = create_response.json()["id"]
 
@@ -335,7 +356,7 @@ async def test_update_goal_invalid_status(client: AsyncClient):
         json={"status": "invalid_status"},
     )
 
-    assert response.status_code == 400
+    assert response.status_code == 422
 
 
 @pytest.mark.asyncio
@@ -829,43 +850,36 @@ async def test_set_goal_priorities_empty_list(client: AsyncClient):
 
 @pytest.mark.asyncio
 async def test_update_goal_status_to_in_progress(client: AsyncClient):
-    """Test updating goal status to in_progress."""
+    """Goal becomes in_progress when first of two tasks is completed."""
     response = await client.post(
         "/goals",
         json={"title": "Status test"},
     )
     goal_id = response.json()["id"]
+    t1 = await _create_one_time_task(client, goal_id, title="One")
+    await _create_one_time_task(client, goal_id, title="Two")
+    await _complete_task(client, t1)
 
-    # Update status to in_progress
-    update_response = await client.patch(
-        f"/goals/{goal_id}/status",
-        json={"status": "in_progress"},
-    )
+    update_response = await client.get(f"/goals/{goal_id}")
     assert update_response.status_code == 200
     assert update_response.json()["status"] == "in_progress"
 
 
 @pytest.mark.asyncio
-async def test_update_goal_status_to_abandoned(client: AsyncClient):
-    """Test updating goal status to abandoned."""
-    response = await client.post(
-        "/goals",
-        json={"title": "Abandon test"},
-    )
+async def test_goal_status_patch_endpoint_removed(client: AsyncClient):
+    """Dedicated /status route was removed (status is derived)."""
+    response = await client.post("/goals", json={"title": "No status route"})
     goal_id = response.json()["id"]
-
-    # Update status to abandoned
-    update_response = await client.patch(
+    r = await client.patch(
         f"/goals/{goal_id}/status",
-        json={"status": "abandoned"},
+        json={"status": "in_progress"},
     )
-    assert update_response.status_code == 200
-    assert update_response.json()["status"] == "abandoned"
+    assert r.status_code == 404
 
 
 @pytest.mark.asyncio
 async def test_update_goal_status_not_found(client: AsyncClient):
-    """Test updating status for non-existent goal."""
+    """PATCH /goals/{id}/status no longer exists."""
     response = await client.patch(
         "/goals/nonexistent-id/status",
         json={"status": "completed"},
@@ -942,10 +956,8 @@ async def test_list_goals_with_status_filter(client: AsyncClient):
         json={"title": "Completed Goal"},
     )
     completed_id = completed_response.json()["id"]
-    await client.patch(
-        f"/goals/{completed_id}/status",
-        json={"status": "completed"},
-    )
+    t = await _create_one_time_task(client, completed_id)
+    await _complete_task(client, t)
 
     # List with include_completed=true
     response = await client.get("/goals?include_completed=true")
@@ -981,10 +993,11 @@ async def test_list_goals_parent_only_block_2(client: AsyncClient):
 @pytest.mark.asyncio
 async def test_list_goals_by_status(client: AsyncClient):
     """Test listing goals by specific status."""
-    # Create a goal with in_progress status
     response = await client.post("/goals", json={"title": "In Progress Goal"})
     goal_id = response.json()["id"]
-    await client.patch(f"/goals/{goal_id}/status", json={"status": "in_progress"})
+    t1 = await _create_one_time_task(client, goal_id, title="a")
+    await _create_one_time_task(client, goal_id, title="b")
+    await _complete_task(client, t1)
 
     # Filter by status
     list_response = await client.get("/goals?status=in_progress")
@@ -1496,7 +1509,7 @@ async def test_batch_reschedule_goals(client: AsyncClient):
         json={"goal_ids": [goal1_id, goal2_id], "target_date": new_deadline},
     )
     # Accept various codes since endpoint may not exist
-    assert response.status_code in [200, 404, 405]
+    assert response.status_code in [200, 404, 405, 422]
 
 
 # ============================================================================
@@ -1612,37 +1625,33 @@ async def test_get_goal_tree_not_found_block_2(client: AsyncClient):
 
 @pytest.mark.asyncio
 async def test_update_goal_status_endpoint(client: AsyncClient):
-    """Test updating goal status via the dedicated status endpoint."""
-    # Create goal
+    """Dedicated status endpoint removed; derive from tasks."""
     goal_response = await client.post("/goals", json={"title": "Status test goal"})
     goal_id = goal_response.json()["id"]
 
-    # Update status to in_progress
     response = await client.patch(
         f"/goals/{goal_id}/status",
         json={"status": "in_progress"},
     )
-    assert response.status_code == 200
-    assert response.json()["status"] == "in_progress"
+    assert response.status_code == 404
 
 
 @pytest.mark.asyncio
 async def test_update_goal_status_to_completed(client: AsyncClient):
-    """Test completing a goal via status endpoint."""
+    """Goal completes when its tasks are all done."""
     goal_response = await client.post("/goals", json={"title": "Complete me"})
     goal_id = goal_response.json()["id"]
+    t = await _create_one_time_task(client, goal_id)
+    await _complete_task(client, t)
 
-    response = await client.patch(
-        f"/goals/{goal_id}/status",
-        json={"status": "completed"},
-    )
+    response = await client.get(f"/goals/{goal_id}")
     assert response.status_code == 200
     assert response.json()["status"] == "completed"
 
 
 @pytest.mark.asyncio
 async def test_update_goal_status_not_found_block_2(client: AsyncClient):
-    """Test status update for non-existent goal."""
+    """PATCH /goals/{id}/status returns 404."""
     response = await client.patch(
         "/goals/00000000-0000-0000-0000-000000000000/status",
         json={"status": "in_progress"},
@@ -1823,15 +1832,12 @@ def mock_validate_priority():
 
 @pytest.mark.asyncio
 async def test_update_goal_status_block_2(client: AsyncClient):
-    """Test updating goal status."""
-    # Create goal
+    """Status cannot be PATCHed directly."""
     create_resp = await client.post("/goals", json={"title": "Test Goal"})
     goal_id = create_resp.json()["id"]
 
-    # Update status
     response = await client.patch(f"/goals/{goal_id}", json={"status": "in_progress"})
-    assert response.status_code == 200
-    assert response.json()["status"] == "in_progress"
+    assert response.status_code == 422
 
 
 @pytest.mark.asyncio
@@ -3275,16 +3281,15 @@ async def test_goal_tree_with_nested_subgoals(client: AsyncClient):
 
 @pytest.mark.asyncio
 async def test_goal_update_status_via_patch(client: AsyncClient):
-    """Test updating goal status through general PATCH endpoint."""
+    """Status is not accepted on PATCH /goals/{id}."""
     goal_resp = await client.post("/goals", json={"title": "Status Patch Goal"})
     goal_id = goal_resp.json()["id"]
-    
+
     response = await client.patch(
         f"/goals/{goal_id}",
         json={"status": "in_progress"},
     )
-    assert response.status_code == 200
-    assert response.json()["status"] == "in_progress"
+    assert response.status_code == 422
 
 
 @pytest.mark.asyncio
@@ -3432,7 +3437,7 @@ async def test_goal_invalid_status(client: AsyncClient):
         f"/goals/{goal_id}",
         json={"status": "invalid_status"},
     )
-    assert response.status_code == 400
+    assert response.status_code == 422
 
 
 # ---- migrated from tests/mocked/test_services_goals_migrated.py ----
@@ -3576,7 +3581,7 @@ async def test_goal_invalid_status__legacyservices_goals_migrated(client: AsyncC
         f"/goals/{goal_id}",
         json={"status": "invalid_status"},
     )
-    assert response.status_code == 400
+    assert response.status_code == 422
 
 
 # ---- migrated from tests/integration/test_api_helpers_goals.py ----

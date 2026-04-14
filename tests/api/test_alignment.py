@@ -810,25 +810,21 @@ async def test_goal_with_description(client: AsyncClient):
 
 @pytest.mark.asyncio
 async def test_update_goal_status_transitions(client: AsyncClient):
-    """Test updating goal through status transitions."""
+    """Goal status is derived; PATCH with status is rejected."""
     goal = await client.post("/goals", json={"title": "Status Goal"})
     goal_id = goal.json()["id"]
 
-    # Start the goal
     response = await client.patch(
         f"/goals/{goal_id}",
         json={"status": "in_progress"},
     )
-    assert response.status_code == 200
-    assert response.json()["status"] == "in_progress"
+    assert response.status_code == 422
 
-    # Complete the goal
-    response = await client.patch(
+    response2 = await client.patch(
         f"/goals/{goal_id}",
         json={"status": "completed"},
     )
-    assert response.status_code == 200
-    assert response.json()["status"] == "completed"
+    assert response2.status_code == 422
 
 
 # ============================================================================
@@ -1233,28 +1229,48 @@ async def test_update_goal_with_parent(client: AsyncClient):
 
 @pytest.mark.asyncio
 async def test_complete_goal_from_in_progress(client: AsyncClient):
-    """Test completing a goal that's in progress."""
+    """Test completing a goal via tasks after it was in_progress."""
+    from datetime import datetime, timezone
+
     goal = await client.post("/goals", json={"title": "Complete Test Goal"})
     goal_id = goal.json()["id"]
-
-    # First set to in_progress
-    await client.patch(f"/goals/{goal_id}", json={"status": "in_progress"})
-
-    # Then complete
-    response = await client.patch(f"/goals/{goal_id}", json={"status": "completed"})
+    scheduled_at = datetime.now(timezone.utc).isoformat()
+    t1 = await client.post(
+        "/tasks",
+        json={
+            "goal_id": goal_id,
+            "title": "A",
+            "duration_minutes": 30,
+            "scheduled_at": scheduled_at,
+        },
+    )
+    t2 = await client.post(
+        "/tasks",
+        json={
+            "goal_id": goal_id,
+            "title": "B",
+            "duration_minutes": 30,
+            "scheduled_at": scheduled_at,
+        },
+    )
+    assert t1.status_code == 201 and t2.status_code == 201
+    await client.post(f"/tasks/{t1.json()['id']}/complete", json={})
+    mid = await client.get(f"/goals/{goal_id}")
+    assert mid.json()["status"] == "in_progress"
+    await client.post(f"/tasks/{t2.json()['id']}/complete", json={})
+    response = await client.get(f"/goals/{goal_id}")
     assert response.status_code == 200
     assert response.json()["status"] == "completed"
 
 
 @pytest.mark.asyncio
 async def test_abandon_goal(client: AsyncClient):
-    """Test abandoning a goal."""
+    """Abandoned status removed; use archive instead."""
     goal = await client.post("/goals", json={"title": "Abandon Test Goal"})
     goal_id = goal.json()["id"]
 
     response = await client.patch(f"/goals/{goal_id}", json={"status": "abandoned"})
-    assert response.status_code == 200
-    assert response.json()["status"] == "abandoned"
+    assert response.status_code == 422
 
 
 @pytest.mark.asyncio
